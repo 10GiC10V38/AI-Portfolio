@@ -1,0 +1,157 @@
+version: "3.9"
+
+services:
+  # ── Local PostgreSQL (mirrors Neon schema exactly) ──────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: portfolio_ai
+      POSTGRES_USER: dev_user
+      POSTGRES_PASSWORD: dev_password_local_only
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../scripts/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev_user -d portfolio_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── News Agent ───────────────────────────────────────────────────────────────
+  agent-news:
+    build:
+      context: ../../
+      dockerfile: agents/news/Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://dev_user:dev_password_local_only@postgres:5432/portfolio_ai
+      - SECRETS_SOURCE=env
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - NEWS_API_KEY=${NEWS_API_KEY}
+      - SCHEDULER_SECRET=${SCHEDULER_SECRET}
+      - LLM_PROVIDER=gemini
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Fundamentals Agent ───────────────────────────────────────────────────────
+  agent-fundamentals:
+    build:
+      context: ../../
+      dockerfile: agents/fundamentals/Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://dev_user:dev_password_local_only@postgres:5432/portfolio_ai
+      - SECRETS_SOURCE=env
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ALPHA_VANTAGE_KEY=${ALPHA_VANTAGE_KEY}
+      - SCHEDULER_SECRET=${SCHEDULER_SECRET}
+      - LLM_PROVIDER=gemini
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Technical Agent ──────────────────────────────────────────────────────────
+  agent-technical:
+    build:
+      context: ../../
+      dockerfile: agents/technical/Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://dev_user:dev_password_local_only@postgres:5432/portfolio_ai
+      - SECRETS_SOURCE=env
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - SCHEDULER_SECRET=${SCHEDULER_SECRET}
+      - LLM_PROVIDER=gemini
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Macro Agent ──────────────────────────────────────────────────────────────
+  agent-macro:
+    build:
+      context: ../../
+      dockerfile: agents/macro/Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://dev_user:dev_password_local_only@postgres:5432/portfolio_ai
+      - SECRETS_SOURCE=env
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - FRED_API_KEY=${FRED_API_KEY}
+      - SCHEDULER_SECRET=${SCHEDULER_SECRET}
+      - LLM_PROVIDER=gemini
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── YouTube Agent ────────────────────────────────────────────────────────────
+  agent-youtube:
+    build:
+      context: ../../
+      dockerfile: agents/youtube/Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://dev_user:dev_password_local_only@postgres:5432/portfolio_ai
+      - SECRETS_SOURCE=env
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+      - SCHEDULER_SECRET=${SCHEDULER_SECRET}
+      - LLM_PROVIDER=gemini
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Portfolio Advisor Agent ──────────────────────────────────────────────────
+  # LLM_PROVIDER=gemini  → free (gemini-2.0-flash)
+  # LLM_PROVIDER=claude  → better quality, needs ANTHROPIC_API_KEY with credits
+  agent-advisor:
+    build:
+      context: ../../
+      dockerfile: agents/advisor/Dockerfile
+    ports:
+      - "8001:8080"
+    environment:
+      - DATABASE_URL=postgresql://dev_user:dev_password_local_only@postgres:5432/portfolio_ai
+      - SECRETS_SOURCE=env
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LLM_PROVIDER=gemini
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── API Gateway (Go) ─────────────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: ../../api
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=postgresql://dev_user:dev_password_local_only@postgres:5432/portfolio_ai?sslmode=disable
+      - JWT_SECRET=${JWT_SECRET}
+      - ADVISOR_URL=http://agent-advisor:8080
+      - ENVIRONMENT=development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agent-advisor:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
