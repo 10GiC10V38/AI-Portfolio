@@ -90,13 +90,17 @@ class ClaudeProvider(LLMProvider):
         temperature: float = 0.2,
     ) -> LLMResponse:
         logger.debug(f"[claude] {self._model} | ~{len(user_prompt)//4} tokens")
-        message = self._client.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
+        try:
+            message = self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+        except Exception as e:
+            logger.error(f"[claude] complete() API call failed: {e}")
+            raise
         return LLMResponse(
             content=message.content[0].text,
             provider="claude",
@@ -113,12 +117,16 @@ class ClaudeProvider(LLMProvider):
         max_tokens: int = 1024,
     ) -> LLMResponse:
         logger.debug(f"[claude] chat {self._model} | {len(messages)} turns")
-        message = self._client.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=messages,
-        )
+        try:
+            message = self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=messages,
+            )
+        except Exception as e:
+            logger.error(f"[claude] complete_chat() API call failed: {e}")
+            raise
         return LLMResponse(
             content=message.content[0].text,
             provider="claude",
@@ -159,16 +167,20 @@ class GeminiProvider(LLMProvider):
     ) -> LLMResponse:
         logger.debug(f"[gemini] {self._model} | ~{len(user_prompt)//4} tokens")
 
-        model = self._genai.GenerativeModel(
-            model_name=self._model,
-            system_instruction=system_prompt,
-            generation_config=self._genai.types.GenerationConfig(
-                max_output_tokens=max_tokens,
-                temperature=temperature,
-            ),
-        )
-        resp  = model.generate_content(user_prompt)
-        text  = resp.text
+        try:
+            model = self._genai.GenerativeModel(
+                model_name=self._model,
+                system_instruction=system_prompt,
+                generation_config=self._genai.types.GenerationConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=temperature,
+                ),
+            )
+            resp = model.generate_content(user_prompt)
+            text = resp.text
+        except Exception as e:
+            logger.error(f"[gemini] complete() API call failed: {e}")
+            raise
 
         in_tok  = getattr(resp.usage_metadata, "prompt_token_count",      0) or 0
         out_tok = getattr(resp.usage_metadata, "candidates_token_count",  0) or 0
@@ -190,26 +202,30 @@ class GeminiProvider(LLMProvider):
     ) -> LLMResponse:
         logger.debug(f"[gemini] chat {self._model} | {len(messages)} turns")
 
-        model = self._genai.GenerativeModel(
-            model_name=self._model,
-            system_instruction=system_prompt,
-            generation_config=self._genai.types.GenerationConfig(
-                max_output_tokens=max_tokens,
-                temperature=0.3,
-            ),
-        )
+        try:
+            model = self._genai.GenerativeModel(
+                model_name=self._model,
+                system_instruction=system_prompt,
+                generation_config=self._genai.types.GenerationConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=0.3,
+                ),
+            )
 
-        # Convert to Gemini history format (all but last message)
-        history = [
-            {
-                "role":  "user" if m["role"] == "user" else "model",
-                "parts": [m["content"]],
-            }
-            for m in messages[:-1]
-        ]
-        chat = model.start_chat(history=history)
-        resp = chat.send_message(messages[-1]["content"])
-        text = resp.text
+            # Convert to Gemini history format (all but last message)
+            history = [
+                {
+                    "role":  "user" if m["role"] == "user" else "model",
+                    "parts": [m["content"]],
+                }
+                for m in messages[:-1]
+            ]
+            chat = model.start_chat(history=history)
+            resp = chat.send_message(messages[-1]["content"])
+            text = resp.text
+        except Exception as e:
+            logger.error(f"[gemini] complete_chat() API call failed: {e}")
+            raise
 
         in_tok  = getattr(resp.usage_metadata, "prompt_token_count",      0) or 0
         out_tok = getattr(resp.usage_metadata, "candidates_token_count",  0) or 0

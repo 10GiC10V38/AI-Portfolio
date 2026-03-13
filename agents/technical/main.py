@@ -20,6 +20,7 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Technical Agent")
 SCHEDULER_SECRET = os.getenv("SCHEDULER_SECRET", "")
+VALID_SEVERITIES = {"critical", "warning", "info", "opportunity"}
 
 SYSTEM_PROMPT = """You are a technical analyst specialising in equity markets.
 Analyze price action, momentum, and technical indicators for stocks in a portfolio.
@@ -87,8 +88,9 @@ def compute_indicators(ticker: str, exchange: str) -> Optional[dict]:
         delta  = close.diff()
         gain   = delta.clip(lower=0).rolling(14).mean()
         loss   = (-delta.clip(upper=0)).rolling(14).mean()
-        rs     = gain / loss
-        rsi    = float(100 - (100 / (1 + rs)).iloc[-1])
+        # Guard: loss=0 means all gains → RSI should be 100 (overbought)
+        rs     = gain / loss.replace(0, float('nan'))
+        rsi    = float((100 - (100 / (1 + rs))).fillna(100).iloc[-1])
 
         # MACD (12, 26, 9)
         ema12  = close.ewm(span=12).mean()
@@ -150,16 +152,15 @@ def run_technical_agent(user_id: str) -> dict:
         finish_agent_run(run_id, "success", alerts_fired=0)
         return {"status": "success", "message": "No market data available (rate limited or market closed)", "alerts_fired": 0}
 
-    provider = get_provider(os.getenv("LLM_PROVIDER", "gemini"), use_sonnet=False)
-    response = provider.complete(
-        system_prompt=SYSTEM_PROMPT,
-        user_prompt=build_technical_prompt(indicators_data),
-        max_tokens=2048,
-        temperature=0.1,
-    )
-
     alerts_fired = 0
     try:
+        provider = get_provider(os.getenv("LLM_PROVIDER", "gemini"), use_sonnet=False)
+        response = provider.complete(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=build_technical_prompt(indicators_data),
+            max_tokens=2048,
+            temperature=0.1,
+        )
         raw = response.content.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -167,13 +168,23 @@ def run_technical_agent(user_id: str) -> dict:
         for analysis in result.get("analyses", []):
             if not analysis.get("should_alert"):
                 continue
+            severity = analysis.get("alert_severity")
+            title    = analysis.get("alert_title")
+            body     = analysis.get("alert_body")
+            ticker   = analysis.get("ticker")
+            if not severity or severity not in VALID_SEVERITIES:
+                logger.warning(f"Technical agent skipping alert — invalid severity: {severity!r}")
+                continue
+            if not title or not body or not ticker:
+                logger.warning("Technical agent skipping alert — missing required fields")
+                continue
             write_alert(
                 user_id=user_id,
                 agent_type="technical",
-                severity=analysis["alert_severity"],
-                title=analysis["alert_title"],
-                body=analysis["alert_body"],
-                ticker=analysis["ticker"],
+                severity=severity,
+                title=title,
+                body=body,
+                ticker=ticker,
                 llm_provider=response.provider,
                 raw_llm_output=result,
                 data_sources={"indicators": analysis.get("key_indicators", {})},
@@ -181,6 +192,10 @@ def run_technical_agent(user_id: str) -> dict:
             alerts_fired += 1
     except json.JSONDecodeError as e:
         logger.error(f"Technical agent JSON parse failed: {e}")
+        finish_agent_run(run_id, "failed", error_message=str(e))
+        return {"status": "failed", "error": str(e)}
+    except Exception as e:
+        logger.error(f"Technical agent run failed: {e}")
         finish_agent_run(run_id, "failed", error_message=str(e))
         return {"status": "failed", "error": str(e)}
 

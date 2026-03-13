@@ -69,8 +69,8 @@ async function request<T>(
   }
 
   if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: resp.statusText }));
-    throw new Error(err.error ?? `Request failed: ${resp.status}`);
+    const err = await resp.json().catch(() => null);
+    throw new Error(err?.error ?? `Request failed: ${resp.status}`);
   }
 
   return resp.json() as Promise<T>;
@@ -117,10 +117,19 @@ export const alerts = {
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
 
+export interface HistoryMessage {
+  role:       "user" | "assistant";
+  content:    string;
+  created_at: string;
+}
+
 export const chat = {
   send: (message: string, sessionId: string) =>
     request<{ reply: string; session_id: string }>("/chat", {
       method: "POST",
       body: JSON.stringify({ message, session_id: sessionId }),
     }),
+
+  getHistory: (sessionId: string) =>
+    request<{ messages: HistoryMessage[] }>(`/chat/history?session_id=${sessionId}`),
 };

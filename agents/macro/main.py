@@ -21,6 +21,7 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Macro Agent")
 SCHEDULER_SECRET = os.getenv("SCHEDULER_SECRET", "")
+VALID_SEVERITIES = {"critical", "warning", "info", "opportunity"}
 
 # FRED series IDs for key macro indicators
 FRED_SERIES = {
@@ -145,36 +146,47 @@ def run_macro_agent(user_id: str) -> dict:
         finish_agent_run(run_id, "success", alerts_fired=0)
         return {"status": "success", "message": "No macro data available", "alerts_fired": 0}
 
-    provider = get_provider(os.getenv("LLM_PROVIDER", "gemini"), use_sonnet=False)
-    response = provider.complete(
-        system_prompt=SYSTEM_PROMPT,
-        user_prompt=build_macro_prompt(macro_data, india_headlines, sector_exposure),
-        max_tokens=2048,
-        temperature=0.2,
-    )
-
     alerts_fired = 0
     try:
+        provider = get_provider(os.getenv("LLM_PROVIDER", "gemini"), use_sonnet=False)
+        response = provider.complete(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=build_macro_prompt(macro_data, india_headlines, sector_exposure),
+            max_tokens=2048,
+            temperature=0.2,
+        )
         raw = response.content.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
         logger.debug(f"Macro LLM raw: {raw[:300]}")
         analysis = json.loads(raw)
         if analysis.get("should_alert"):
-            write_alert(
-                user_id=user_id,
-                agent_type="macro",
-                severity=analysis["alert_severity"],
-                title=analysis["alert_title"],
-                body=analysis["alert_body"],
-                ticker=None,           # macro alerts are portfolio-level
-                llm_provider=response.provider,
-                raw_llm_output=response.raw,
-                data_sources={"macro": macro_data, "headlines": india_headlines},
-            )
-            alerts_fired = 1
+            severity = analysis.get("alert_severity")
+            title    = analysis.get("alert_title")
+            body     = analysis.get("alert_body")
+            if not severity or severity not in VALID_SEVERITIES:
+                logger.warning(f"Macro agent skipping alert — invalid severity: {severity!r}")
+            elif not title or not body:
+                logger.warning("Macro agent skipping alert — missing title or body")
+            else:
+                write_alert(
+                    user_id=user_id,
+                    agent_type="macro",
+                    severity=severity,
+                    title=title,
+                    body=body,
+                    ticker=None,           # macro alerts are portfolio-level
+                    llm_provider=response.provider,
+                    raw_llm_output=analysis,
+                    data_sources={"macro": macro_data, "headlines": india_headlines},
+                )
+                alerts_fired = 1
     except json.JSONDecodeError as e:
-        logger.error(f"Macro agent LLM JSON parse failed: {e}")
+        logger.error(f"Macro agent JSON parse failed: {e}")
+        finish_agent_run(run_id, "failed", error_message=str(e))
+        return {"status": "failed", "error": str(e)}
+    except Exception as e:
+        logger.error(f"Macro agent run failed: {e}")
         finish_agent_run(run_id, "failed", error_message=str(e))
         return {"status": "failed", "error": str(e)}
 

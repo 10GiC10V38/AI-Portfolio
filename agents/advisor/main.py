@@ -4,7 +4,12 @@ On-demand only — triggered by user chat via the API gateway.
 Maintains per-session conversation history, has full access to portfolio state,
 recent alerts, and all agent insights.
 """
-import os, sys, json, logging, uuid
+import os, sys, json, logging, uuid, re
+
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+
+def is_valid_uuid(val: str) -> bool:
+    return bool(_UUID_RE.match(val))
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional
@@ -87,11 +92,20 @@ def build_context_snapshot(user_id: str) -> dict:
     holdings = get_user_holdings(user_id)
     alerts   = get_recent_alerts(user_id)
 
-    # Convert Decimal fields to float so the snapshot is JSON-serializable
+    def _serialize(v):
+        if hasattr(v, 'isoformat'):          # datetime / date
+            return v.isoformat()
+        if hasattr(v, '__float__') and not isinstance(v, (int, str, bool, type(None))):
+            return float(v)                  # Decimal
+        return v
+
     serializable_holdings = [
-        {k: float(v) if hasattr(v, '__float__') and not isinstance(v, (int, str, bool, type(None))) else v
-         for k, v in h.items()}
+        {k: _serialize(v) for k, v in h.items()}
         for h in holdings
+    ]
+    serializable_alerts = [
+        {k: _serialize(v) for k, v in a.items()}
+        for a in alerts
     ]
 
     total_value = sum(
@@ -102,7 +116,7 @@ def build_context_snapshot(user_id: str) -> dict:
     return {
         "holdings":      serializable_holdings,
         "total_value":   round(total_value, 2),
-        "recent_alerts": alerts,
+        "recent_alerts": serializable_alerts,
         "holdings_count": len(holdings),
     }
 
@@ -187,7 +201,8 @@ class ChatRequest(BaseModel):
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    session_id = request.session_id or str(uuid.uuid4())
+    sid = request.session_id
+    session_id = sid if sid and is_valid_uuid(sid) else str(uuid.uuid4())
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
     return run_chat(request.user_id, session_id, request.message.strip())

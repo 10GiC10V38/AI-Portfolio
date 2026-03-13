@@ -2,6 +2,16 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { chat, ChatMessage } from "../api";
 
+const SESSION_KEY = "advisor_session_id";
+
+function getOrCreateSessionId(): string {
+  const stored = localStorage.getItem(SESSION_KEY);
+  if (stored) return stored;
+  const id = crypto.randomUUID();
+  localStorage.setItem(SESSION_KEY, id);
+  return id;
+}
+
 const STARTER_PROMPTS = [
   "How concentrated am I in tech stocks?",
   "Which of my holdings have the highest risk right now?",
@@ -120,17 +130,37 @@ function TypingIndicator() {
 }
 
 export function ChatScreen() {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput]       = useState("");
-  const [loading, setLoading]   = useState(false);
-  const [sessionId]             = useState(() => crypto.randomUUID());
-  const bottomRef               = useRef<HTMLDivElement>(null);
-  const inputRef                = useRef<HTMLTextAreaElement>(null);
+  const [messages, setMessages]   = useState<ChatMessage[]>([]);
+  const [input, setInput]         = useState("");
+  const [loading, setLoading]     = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [sessionId, setSessionId] = useState(getOrCreateSessionId);
+  const bottomRef                 = useRef<HTMLDivElement>(null);
+  const inputRef                  = useRef<HTMLTextAreaElement>(null);
 
   const scrollToBottom = () =>
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 
   useEffect(scrollToBottom, [messages, loading]);
+
+  // Load existing session history on mount
+  useEffect(() => {
+    chat.getHistory(sessionId)
+      .then(({ messages: history }) => {
+        if (history.length > 0) {
+          setMessages(history.map(m => ({ role: m.role, content: m.content })));
+        }
+      })
+      .catch(() => {}) // silently ignore — empty session is fine
+      .finally(() => setHistoryLoading(false));
+  }, [sessionId]);
+
+  const startNewChat = () => {
+    const id = crypto.randomUUID();
+    localStorage.setItem(SESSION_KEY, id);
+    setSessionId(id);
+    setMessages([]);
+  };
 
   const sendMessage = useCallback(async (text?: string) => {
     const content = (text ?? input).trim();
@@ -161,11 +191,24 @@ export function ChatScreen() {
     }
   };
 
-  const isEmpty = messages.length === 0;
+  const isEmpty = messages.length === 0 && !historyLoading;
 
   return (
     <div className="chat-screen">
+      <div className="chat-header">
+        <span className="chat-header-title">Portfolio Advisor</span>
+        <button className="new-chat-btn" onClick={startNewChat} title="Start new conversation">
+          + New Chat
+        </button>
+      </div>
+
       <div className="message-thread">
+        {historyLoading && (
+          <div className="history-loading">
+            <span className="dot" /><span className="dot" /><span className="dot" />
+          </div>
+        )}
+
         {isEmpty && (
           <div className="chat-welcome">
             <div className="welcome-icon">📊</div>

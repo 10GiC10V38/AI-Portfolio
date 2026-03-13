@@ -17,6 +17,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -113,14 +114,26 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // Simple in-memory rate limiter per IP (resets on restart — fine for free tier)
-var rateLimiter = make(map[string][]time.Time)
+var (
+	rateLimiter   = make(map[string][]time.Time)
+	rateLimiterMu sync.Mutex
+)
+
+func clientIP(r *http.Request) string {
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		// X-Forwarded-For may be a comma-separated list; take the first (original client)
+		return strings.TrimSpace(strings.SplitN(forwarded, ",", 2)[0])
+	}
+	return r.RemoteAddr
+}
 
 func rateLimitMiddleware(maxReqs int, window time.Duration, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
+		ip := clientIP(r)
 		now := time.Now()
 		cutoff := now.Add(-window)
 
+		rateLimiterMu.Lock()
 		filtered := rateLimiter[ip][:0]
 		for _, t := range rateLimiter[ip] {
 			if t.After(cutoff) {
@@ -128,12 +141,16 @@ func rateLimitMiddleware(maxReqs int, window time.Duration, next http.HandlerFun
 			}
 		}
 		rateLimiter[ip] = filtered
+		limited := len(rateLimiter[ip]) >= maxReqs
+		if !limited {
+			rateLimiter[ip] = append(rateLimiter[ip], now)
+		}
+		rateLimiterMu.Unlock()
 
-		if len(rateLimiter[ip]) >= maxReqs {
+		if limited {
 			jsonError(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
-		rateLimiter[ip] = append(rateLimiter[ip], now)
 		next(w, r)
 	}
 }
@@ -334,6 +351,47 @@ func handleMarkAlertRead(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]bool{"success": true})
 }
 
+// GET /chat/history?session_id=<uuid>&limit=50
+// Returns the message history for a session directly from the DB.
+func handleChatHistory(w http.ResponseWriter, r *http.Request) {
+	userID    := r.Header.Get("X-User-ID")
+	sessionID := r.URL.Query().Get("session_id")
+	limit     := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+
+	rows, err := db.Query(`
+		SELECT role, content, created_at
+		FROM chat_messages
+		WHERE session_id = $1 AND user_id = $2
+		ORDER BY created_at ASC
+		LIMIT $3
+	`, sessionID, userID, limit)
+	if err != nil {
+		jsonError(w, "Failed to load history", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type Message struct {
+		Role      string    `json:"role"`
+		Content   string    `json:"content"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+	messages := []Message{}
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.Role, &m.Content, &m.CreatedAt); err == nil {
+			messages = append(messages, m)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"messages": messages})
+}
+
 // POST /chat — proxy to advisor agent
 func handleChat(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
@@ -355,7 +413,10 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result == nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Advisor returned an unexpected response"})
+		return
+	}
 	json.NewEncoder(w).Encode(result)
 }
 
@@ -498,6 +559,7 @@ func main() {
 	r.HandleFunc("/alerts", authMiddleware(handleGetAlerts)).Methods("GET")
 	r.HandleFunc("/alerts/{id}/read", authMiddleware(handleMarkAlertRead)).Methods("PATCH")
 	r.HandleFunc("/chat", authMiddleware(handleChat)).Methods("POST")
+	r.HandleFunc("/chat/history", authMiddleware(handleChatHistory)).Methods("GET")
 	r.HandleFunc("/admin/zerodha/sync", authMiddleware(handleZerodhaSync)).Methods("POST")
 
 	// CORS — allow only our frontend origins

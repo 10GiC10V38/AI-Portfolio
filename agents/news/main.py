@@ -22,6 +22,7 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 app = FastAPI(title="News Agent")
 SCHEDULER_SECRET = os.getenv("SCHEDULER_SECRET", "")
+VALID_SEVERITIES = {"critical", "warning", "info", "opportunity"}
 
 NEWS_API_BASE = "https://newsapi.org/v2"
 
@@ -127,16 +128,15 @@ def run_news_agent(user_id: str) -> dict:
         finish_agent_run(run_id, "success", alerts_fired=0)
         return {"status": "success", "message": "No headlines fetched", "alerts_fired": 0}
 
-    provider = get_provider(os.getenv("LLM_PROVIDER", "gemini"), use_sonnet=False)
-    response = provider.complete(
-        system_prompt=SYSTEM_PROMPT,
-        user_prompt=build_news_prompt(tickers, all_headlines),
-        max_tokens=2048,
-        temperature=0.1,
-    )
-
     alerts_fired = 0
     try:
+        provider = get_provider(os.getenv("LLM_PROVIDER", "gemini"), use_sonnet=False)
+        response = provider.complete(
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=build_news_prompt(tickers, all_headlines),
+            max_tokens=2048,
+            temperature=0.1,
+        )
         # Strip markdown code fences Gemini sometimes wraps JSON in
         raw = response.content.strip()
         if raw.startswith("```"):
@@ -147,13 +147,23 @@ def run_news_agent(user_id: str) -> dict:
         for analysis in result.get("analyses", []):
             if not analysis.get("should_alert"):
                 continue
+            severity = analysis.get("alert_severity")
+            title    = analysis.get("alert_title")
+            body     = analysis.get("alert_body")
+            ticker   = analysis.get("ticker")
+            if not severity or severity not in VALID_SEVERITIES:
+                logger.warning(f"News agent skipping alert — invalid severity: {severity!r}")
+                continue
+            if not title or not body or not ticker:
+                logger.warning("News agent skipping alert — missing required fields")
+                continue
             write_alert(
                 user_id=user_id,
                 agent_type="news",
-                severity=analysis["alert_severity"],
-                title=analysis["alert_title"],
-                body=analysis["alert_body"],
-                ticker=analysis["ticker"],
+                severity=severity,
+                title=title,
+                body=body,
+                ticker=ticker,
                 llm_provider=response.provider,
                 raw_llm_output=result,
                 data_sources={
@@ -164,6 +174,10 @@ def run_news_agent(user_id: str) -> dict:
             alerts_fired += 1
     except json.JSONDecodeError as e:
         logger.error(f"News agent JSON parse failed: {e}")
+        finish_agent_run(run_id, "failed", error_message=str(e))
+        return {"status": "failed", "error": str(e)}
+    except Exception as e:
+        logger.error(f"News agent run failed: {e}")
         finish_agent_run(run_id, "failed", error_message=str(e))
         return {"status": "failed", "error": str(e)}
 

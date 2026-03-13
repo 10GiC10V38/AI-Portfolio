@@ -333,6 +333,32 @@ body {
   40%           { transform: translateY(-5px); }
 }
 
+/* Chat header */
+.chat-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+.chat-header-title {
+  font-size: 15px; font-weight: 600; color: var(--text);
+}
+.new-chat-btn {
+  font-size: 13px; font-weight: 500;
+  padding: 5px 12px; border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--bg-card); color: var(--text-muted);
+  cursor: pointer; transition: background 0.15s, color 0.15s;
+}
+.new-chat-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* History loading */
+.history-loading {
+  display: flex; gap: 5px; align-items: center; justify-content: center;
+  padding: 24px;
+}
+
 /* Chat input bar */
 .chat-input-bar {
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));

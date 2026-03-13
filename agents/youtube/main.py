@@ -233,8 +233,8 @@ def run_youtube_agent(user_id: str) -> dict:
             mentioned = relevance.get("mentioned_tickers", [])
             logger.info(f"Relevant video: '{video['title']}' mentions {mentioned}")
 
-            # Step 2 — full insight extraction (Sonnet for quality)
-            deep_provider = get_provider(os.getenv("LLM_PROVIDER", "gemini"), use_sonnet=False)
+            # Step 2 — full insight extraction (use full/pro model tier for quality)
+            deep_provider = get_provider(os.getenv("LLM_PROVIDER", "gemini"), use_sonnet=True)
             ins_response = deep_provider.complete(
                 system_prompt=INSIGHT_SYSTEM,
                 user_prompt=build_insight_prompt(video["title"], transcript, mentioned),
