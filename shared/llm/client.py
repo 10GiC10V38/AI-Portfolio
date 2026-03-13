@@ -225,6 +225,8 @@ class GeminiProvider(LLMProvider):
 
 
 # ── GPT provider (Phase 2 stub) ───────────────────────────────────────────────
+# To implement: pip install openai, then fill in with openai.OpenAI client.
+# Model tiers: use_sonnet=False → gpt-4o-mini, use_sonnet=True → gpt-4o
 
 class GPTProvider(LLMProvider):
     @property
@@ -236,6 +238,47 @@ class GPTProvider(LLMProvider):
 
     def complete_chat(self, system_prompt, messages, max_tokens=1024):
         raise NotImplementedError("GPTProvider — Phase 2")
+
+
+# ── Adding a new provider ─────────────────────────────────────────────────────
+# 1. Subclass LLMProvider and implement complete() + complete_chat()
+# 2. Register it in _PROVIDER_REGISTRY below
+# 3. Set LLM_PROVIDER=yourname in .env — nothing else to change
+#
+# Example skeleton:
+#
+#   class MistralProvider(LLMProvider):
+#       @property
+#       def provider_name(self): return "mistral"
+#       def complete(self, system_prompt, user_prompt, max_tokens=1024, temperature=0.2):
+#           ...
+#       def complete_chat(self, system_prompt, messages, max_tokens=1024):
+#           ...
+
+
+# ── Provider registry ─────────────────────────────────────────────────────────
+# Maps LLM_PROVIDER env value → (builder_fn(secrets, use_sonnet) → LLMProvider)
+# Add new providers here without touching get_provider().
+
+def _build_gemini(secrets: dict, use_sonnet: bool) -> LLMProvider:
+    return GeminiProvider(api_key=secrets["GEMINI_API_KEY"], use_full=use_sonnet)
+
+def _build_claude(secrets: dict, use_sonnet: bool) -> LLMProvider:
+    key = secrets.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        logger.warning("ANTHROPIC_API_KEY not set — falling back to Gemini")
+        return _build_gemini(secrets, use_sonnet)
+    return ClaudeProvider(api_key=key, use_sonnet=use_sonnet)
+
+def _build_gpt(secrets: dict, use_sonnet: bool) -> LLMProvider:
+    return GPTProvider()
+
+_PROVIDER_REGISTRY: dict[str, object] = {
+    "gemini": _build_gemini,
+    "claude": _build_claude,
+    "gpt":    _build_gpt,
+    # "mistral": _build_mistral,   ← add new providers here
+}
 
 
 # ── Consensus orchestrator (Phase 2 stub) ────────────────────────────────────
@@ -271,32 +314,18 @@ def get_provider(
     use_sonnet: bool = False,      # maps to "use full/pro model" for any provider
 ) -> LLMProvider:
     """
-    Factory. Default provider is gemini (free).
-    Set LLM_PROVIDER=claude in env to use Claude (requires API credits).
-    Claude falls back to Gemini automatically if ANTHROPIC_API_KEY is missing.
+    Factory — looks up _PROVIDER_REGISTRY by name.
+    Set LLM_PROVIDER=<name> in env to switch providers.
+    use_sonnet=True selects the higher-quality model tier for that provider.
     """
-    secrets = _load_secrets()
-
-    if provider_name == "gemini":
-        return GeminiProvider(
-            api_key=secrets["GEMINI_API_KEY"],
-            use_full=use_sonnet,           # use_sonnet=True → gemini-2.0-flash
+    builder = _PROVIDER_REGISTRY.get(provider_name)
+    if builder is None:
+        raise ValueError(
+            f"Unknown LLM provider: {provider_name!r}. "
+            f"Available: {list(_PROVIDER_REGISTRY.keys())}"
         )
-
-    if provider_name == "claude":
-        anthropic_key = secrets.get("ANTHROPIC_API_KEY", "")
-        if not anthropic_key:
-            logger.warning("ANTHROPIC_API_KEY not set — falling back to Gemini")
-            return GeminiProvider(
-                api_key=secrets["GEMINI_API_KEY"],
-                use_full=use_sonnet,
-            )
-        return ClaudeProvider(api_key=anthropic_key, use_sonnet=use_sonnet)
-
-    if provider_name == "gpt":
-        return GPTProvider()
-
-    raise ValueError(f"Unknown LLM provider: {provider_name!r}")
+    secrets = _load_secrets()
+    return builder(secrets, use_sonnet)  # type: ignore[operator]
 
 
 # ── Secret loader ─────────────────────────────────────────────────────────────
