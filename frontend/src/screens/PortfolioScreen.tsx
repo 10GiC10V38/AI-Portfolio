@@ -34,7 +34,7 @@ const SECTOR_COLORS = [
   "#9B59B6", "#E67E22", "#16A085", "#2C3E50",
 ];
 
-export function PortfolioScreen() {
+export function PortfolioScreen({ onConnectKite }: { onConnectKite?: () => void }) {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
@@ -56,7 +56,10 @@ export function PortfolioScreen() {
   if (error)   return <div className="screen-error">Failed to load: {error}</div>;
   if (!holdings.length) return (
     <div className="screen">
-      <div className="empty-state">No holdings found. Connect your brokerage to get started.</div>
+      <div className="empty-state">
+        <p>No holdings found.</p>
+        <button className="btn-primary" onClick={onConnectKite}>Connect Kite</button>
+      </div>
     </div>
   );
 

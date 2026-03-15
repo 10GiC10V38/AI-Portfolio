@@ -4,6 +4,7 @@ import { PortfolioScreen } from "./screens/PortfolioScreen";
 import { AlertsScreen }    from "./screens/AlertsScreen";
 import { ChatScreen }      from "./screens/ChatScreen";
 import { auth }            from "./api";
+import { zerodha }         from "./services/api";
 import "./index.css";
 
 type Tab = "portfolio" | "alerts" | "chat";
@@ -86,12 +87,29 @@ function NavBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
 }
 
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(auth.isLoggedIn());
+  const [loggedIn, setLoggedIn]   = useState(auth.isLoggedIn());
   const [activeTab, setActiveTab] = useState<Tab>("portfolio");
+  const [kitesyncing, setKiteSyncing] = useState(false);
 
   useEffect(() => {
     setLoggedIn(auth.isLoggedIn());
   }, []);
+
+  // Handle Kite OAuth callback — detect ?request_token=xxx in URL after redirect
+  useEffect(() => {
+    if (!auth.isLoggedIn()) return;
+    const params = new URLSearchParams(window.location.search);
+    const requestToken = params.get("request_token");
+    const status       = params.get("status");
+    if (requestToken && status === "success") {
+      setKiteSyncing(true);
+      // Clean the URL immediately so refresh doesn't re-trigger
+      window.history.replaceState({}, "", window.location.pathname);
+      zerodha.sync(requestToken)
+        .catch(() => {})
+        .finally(() => setKiteSyncing(false));
+    }
+  }, [loggedIn]);
 
   if (!loggedIn) {
     return <LoginScreen onLogin={() => setLoggedIn(true)} />;
@@ -105,8 +123,12 @@ export default function App() {
         <button className="logout-btn" onClick={auth.logout}>Sign out</button>
       </header>
 
+      {kitesyncing && (
+        <div className="sync-banner">Syncing holdings from Kite…</div>
+      )}
+
       <main className="app-main">
-        {activeTab === "portfolio" && <PortfolioScreen />}
+        {activeTab === "portfolio" && <PortfolioScreen onConnectKite={() => window.location.href = zerodha.loginUrl()} />}
         {activeTab === "alerts"    && <AlertsScreen />}
         {activeTab === "chat"      && <ChatScreen />}
       </main>

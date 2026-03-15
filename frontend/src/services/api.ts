@@ -106,6 +106,21 @@ export const portfolio = {
   getHoldings: () => request<Holding[]>("/portfolio/holdings"),
 };
 
+// ── Zerodha ───────────────────────────────────────────────────────────────────
+
+export const zerodha = {
+  sync: (requestToken: string) =>
+    request<{ synced: number; status: string }>("/admin/zerodha/sync", {
+      method: "POST",
+      body: JSON.stringify({ request_token: requestToken }),
+    }),
+
+  loginUrl: () => {
+    const apiKey = import.meta.env.VITE_ZERODHA_API_KEY;
+    return `https://kite.zerodha.com/connect/login?api_key=${apiKey}&v=3`;
+  },
+};
+
 // ── Alerts ────────────────────────────────────────────────────────────────────
 
 export const alerts = {
