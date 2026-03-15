@@ -10,12 +10,12 @@ PROJECT_ID=$(gcloud config get-value project)
 REGION="asia-south1"
 SCHEDULER_SECRET="${SCHEDULER_SECRET:?SCHEDULER_SECRET env var must be set}"
 
-# Service URLs — update after running scripts/deploy_agents.sh
-NEWS_URL="${NEWS_AGENT_URL:?Set NEWS_AGENT_URL}"
-FUNDAMENTALS_URL="${FUNDAMENTALS_AGENT_URL:?Set FUNDAMENTALS_AGENT_URL}"
-TECHNICAL_URL="${TECHNICAL_AGENT_URL:?Set TECHNICAL_AGENT_URL}"
-MACRO_URL="${MACRO_AGENT_URL:?Set MACRO_AGENT_URL}"
-YOUTUBE_URL="${YOUTUBE_AGENT_URL:?Set YOUTUBE_AGENT_URL}"
+# Service URLs — deployed on GCP Cloud Run (asia-south1)
+NEWS_URL="${NEWS_AGENT_URL:-https://portfolio-ai-news-agent-epdj46agqq-el.a.run.app}"
+FUNDAMENTALS_URL="${FUNDAMENTALS_AGENT_URL:-https://portfolio-ai-fundamentals-agent-epdj46agqq-el.a.run.app}"
+TECHNICAL_URL="${TECHNICAL_AGENT_URL:-https://portfolio-ai-technical-agent-epdj46agqq-el.a.run.app}"
+MACRO_URL="${MACRO_AGENT_URL:-https://portfolio-ai-macro-agent-epdj46agqq-el.a.run.app}"
+YOUTUBE_URL="${YOUTUBE_AGENT_URL:-https://portfolio-ai-youtube-agent-epdj46agqq-el.a.run.app}"
 
 # Default user — in production this becomes a fan-out job per active user
 USER_ID="${DEFAULT_USER_ID:?Set DEFAULT_USER_ID}"

@@ -18,7 +18,7 @@ from psycopg2 import pool
 from psycopg2.extras import RealDictCursor, Json
 
 # Input validation
-_TICKER_RE = re.compile(r'^[A-Z0-9\-\.]{1,20}$')
+_TICKER_RE = re.compile(r'^[A-Z0-9\-\.&_]{1,20}$')
 _VALID_SEVERITIES = {"critical", "warning", "info", "opportunity"}
 
 logger = logging.getLogger(__name__)

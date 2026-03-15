@@ -43,7 +43,7 @@ export function PortfolioScreen({ onConnectKite, onStockSelect }: Props) {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
-  const [sortBy, setSortBy]     = useState<"value" | "pnl" | "pnlPct">("value"); // used for sort pills
+  const [sortBy, setSortBy]     = useState<"value" | "pnl" | "pnlPct">("value");
 
   useEffect(() => {
     portfolio.getHoldings()
@@ -51,7 +51,23 @@ export function PortfolioScreen({ onConnectKite, onStockSelect }: Props) {
       .catch(e  => { setError(e.message); setLoading(false); });
   }, []);
 
-  const sectors = useMemo(() => groupBySector(holdings), [holdings]);
+  const sectors = useMemo(() => {
+    const groups = groupBySector(holdings);
+    // Sort holdings within each sector group based on sortBy
+    for (const g of groups) {
+      g.holdings.sort((a, b) => {
+        switch (sortBy) {
+          case "pnl":
+            return (b.unrealized_pnl ?? 0) - (a.unrealized_pnl ?? 0);
+          case "pnlPct":
+            return (b.unrealized_pct ?? 0) - (a.unrealized_pct ?? 0);
+          default: // "value"
+            return ((b.last_price || b.avg_cost) * b.quantity) - ((a.last_price || a.avg_cost) * a.quantity);
+        }
+      });
+    }
+    return groups;
+  }, [holdings, sortBy]);
 
   const totalValue    = holdings.reduce((s, h) => s + (h.last_price || h.avg_cost) * h.quantity, 0);
   const totalCost     = holdings.reduce((s, h) => s + h.avg_cost * h.quantity, 0);

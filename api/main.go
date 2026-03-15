@@ -44,7 +44,7 @@ var db *sql.DB
 var (
 	emailRegex  = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
 	uuidRegex   = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-	tickerRegex = regexp.MustCompile(`^[A-Z0-9\-\.]{1,20}$`)
+	tickerRegex = regexp.MustCompile(`^[A-Z0-9\-\.&_]{1,20}$`)
 )
 
 const maxRequestBodySize = 1 << 20 // 1 MB
