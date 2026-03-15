@@ -60,7 +60,8 @@ create_secret() {
   echo "Secret '${name}' created and access granted."
 }
 
-create_secret "anthropic-api-key"    "Enter your Anthropic API key"
+create_secret "gemini-api-key"       "Enter your Gemini API key (from aistudio.google.com)"
+create_secret "anthropic-api-key"    "Enter your Anthropic API key (optional — press Enter to skip)"
 create_secret "database-url"         "Enter your Neon PostgreSQL connection string"
 create_secret "news-api-key"         "Enter your NewsAPI.org key (or press Enter to skip)"
 create_secret "alpha-vantage-key"    "Enter your Alpha Vantage key (free at alphavantage.co)"

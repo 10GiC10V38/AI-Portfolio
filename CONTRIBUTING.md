@@ -193,7 +193,7 @@ curl -X POST http://localhost:8080/chat \
 | [Vercel](https://vercel.com) | React frontend | Yes |
 | [GCP Cloud Run](https://cloud.google.com/run) | 6 Python agents + Go gateway (asia-south1) | 2M req/month |
 | [Neon](https://neon.tech) | PostgreSQL database | 0.5 GB free |
-| [Kite Connect](https://kite.zerodha.com) | Zerodha holdings sync | ₹2000/yr |
+| [Kite Connect](https://kite.zerodha.com) | Zerodha holdings sync | Free for personal |
 
 ### What auto-deploys vs manual
 
