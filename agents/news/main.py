@@ -39,31 +39,37 @@ Be precise — only flag genuinely significant news, not routine updates.
 Respond in valid JSON only."""
 
 
+def _sanitize(text: str) -> str:
+    """Remove characters that can break JSON strings in LLM output."""
+    return text.replace('"', "'").replace("\\", "").replace("\n", " ").replace("\r", "").strip()
+
 def build_news_prompt(tickers: list[str], headlines: list[str]) -> str:
+    clean_headlines = [_sanitize(h) for h in headlines[:30] if h.strip()]
     return f"""Analyze these news headlines for sentiment impact on portfolio stocks.
 
 Portfolio tickers: {', '.join(tickers)}
 
 Recent headlines:
-{chr(10).join(f'- {h}' for h in headlines[:30])}
+{chr(10).join(f'- {h}' for h in clean_headlines)}
 
-For each ticker that has significant news, respond with:
+For each ticker that has significant news, respond with valid JSON only:
 {{
   "analyses": [
     {{
       "ticker": "<TICKER>",
-      "sentiment": "bullish" | "bearish" | "neutral",
-      "confidence": "high" | "medium" | "low",
-      "should_alert": <true | false>,
-      "alert_severity": "critical" | "warning" | "info" | "opportunity" | null,
-      "alert_title": "<concise title>" | null,
-      "alert_body": "<2-3 sentence summary with specific news detail>" | null,
-      "relevant_headlines": ["<headline1>"]
+      "sentiment": "bullish or bearish or neutral",
+      "confidence": "high or medium or low",
+      "should_alert": true,
+      "alert_severity": "critical or warning or info or opportunity",
+      "alert_title": "<concise title under 100 chars>",
+      "alert_body": "<2-3 sentence summary>",
+      "relevant_headlines": ["<headline>"]
     }}
   ]
 }}
 
-Only include tickers with high-confidence, actionable signals. Skip neutral/routine news."""
+Only include tickers with high-confidence, actionable signals. Skip neutral/routine news.
+IMPORTANT: Return only valid JSON. Do not include any text before or after the JSON."""
 
 
 def fetch_newsapi_headlines(tickers: list[str], api_key: str) -> list[str]:
@@ -142,12 +148,22 @@ def run_news_agent(user_id: str) -> dict:
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1]
             raw = raw.rsplit("```", 1)[0].strip()
-        logger.debug(f"LLM raw response: {raw[:200]}")
-        # Truncate to last complete JSON object in case output was cut off
-        last_brace = raw.rfind("}")
-        if last_brace != -1:
-            raw = raw[:last_brace + 1]
-        result = json.loads(raw)
+        logger.debug(f"LLM raw response: {raw[:300]}")
+        # Try to extract a valid JSON object even if the output is partially truncated
+        try:
+            result = json.loads(raw)
+        except json.JSONDecodeError:
+            # Fall back: extract just the analyses array if the outer object is broken
+            import re as _re
+            m = _re.search(r'"analyses"\s*:\s*(\[.*?\])', raw, _re.DOTALL)
+            if m:
+                try:
+                    analyses = json.loads(m.group(1))
+                    result = {"analyses": analyses}
+                except json.JSONDecodeError:
+                    raise
+            else:
+                raise
         for analysis in result.get("analyses", []):
             if not analysis.get("should_alert"):
                 continue
