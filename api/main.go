@@ -303,7 +303,7 @@ func handleGetHoldings(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var holdings []map[string]interface{}
+	holdings := make([]map[string]interface{}, 0)
 	for rows.Next() {
 		var ticker, exchange, currency string
 		var companyName, sector sql.NullString
@@ -354,7 +354,7 @@ func handleGetAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var alerts []map[string]interface{}
+	alerts := make([]map[string]interface{}, 0)
 	for rows.Next() {
 		var id, agentType, severity, title, body string
 		var ticker sql.NullString
@@ -463,13 +463,13 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result == nil {
-		json.NewEncoder(w).Encode(map[string]string{"error": "Advisor returned an unexpected response"})
+		jsonError(w, "Advisor returned an unexpected response", http.StatusBadGateway)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
 	json.NewEncoder(w).Encode(result)
 }
 
@@ -641,7 +641,7 @@ func handleGetHoldingDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	defer alertRows.Close()
 
-	var tickerAlerts []map[string]interface{}
+	tickerAlerts := make([]map[string]interface{}, 0)
 	for alertRows.Next() {
 		var id, agentType, severity, title, body string
 		var confidencePct sql.NullInt64
@@ -693,7 +693,7 @@ func handleGetAlertsByTicker(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var alerts []map[string]interface{}
+	alerts := make([]map[string]interface{}, 0)
 	for rows.Next() {
 		var id, agentType, severity, title, body string
 		var confidencePct sql.NullInt64

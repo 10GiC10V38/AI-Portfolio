@@ -28,12 +28,32 @@ logger = logging.getLogger(__name__)
 _pool: Optional[pool.ThreadedConnectionPool] = None
 
 
+def _resolve_database_url() -> str:
+    """Get DATABASE_URL from env or GCP Secret Manager."""
+    url = os.getenv("DATABASE_URL")
+    if url:
+        return url
+    if os.getenv("SECRETS_SOURCE") == "gcp":
+        try:
+            from google.cloud import secretmanager
+            client = secretmanager.SecretManagerServiceClient()
+            project = os.environ["GCP_PROJECT_ID"]
+            path = f"projects/{project}/secrets/database-url/versions/latest"
+            resp = client.access_secret_version(request={"name": path})
+            url = resp.payload.data.decode("UTF-8").strip()
+            os.environ["DATABASE_URL"] = url  # cache for subsequent calls
+            logger.info("DATABASE_URL loaded from GCP Secret Manager")
+            return url
+        except Exception as e:
+            logger.error(f"Failed to load DATABASE_URL from GCP Secret Manager: {e}")
+            raise
+    raise EnvironmentError("DATABASE_URL environment variable is not set")
+
+
 def _get_pool() -> pool.ThreadedConnectionPool:
     global _pool
     if _pool is None:
-        db_url = os.getenv("DATABASE_URL")
-        if not db_url:
-            raise EnvironmentError("DATABASE_URL environment variable is not set")
+        db_url = _resolve_database_url()
         _pool = pool.ThreadedConnectionPool(minconn=1, maxconn=5, dsn=db_url)
         logger.info("Database connection pool created")
     return _pool

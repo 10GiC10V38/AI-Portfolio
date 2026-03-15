@@ -33,7 +33,10 @@ export function StockDetailScreen({ ticker, onBack, onAskAdvisor }: Props) {
     setLoading(true);
     setError(null);
     portfolio.getHoldingDetail(ticker)
-      .then(d => { setData(d); setLoading(false); })
+      .then(d => {
+        setData({ ...d, alerts: d.alerts ?? [] });
+        setLoading(false);
+      })
       .catch(e => { setError(e.message); setLoading(false); });
   }, [ticker]);
 

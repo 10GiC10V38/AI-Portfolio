@@ -382,12 +382,19 @@ def _load_from_gcp_secret_manager() -> dict:
             resp = client.access_secret_version(request={"name": path})
             return resp.payload.data.decode("UTF-8")
 
+        def access_optional(name: str) -> str:
+            try:
+                return access(name)
+            except Exception:
+                logger.info(f"Optional secret '{name}' not found, skipping")
+                return ""
+
         return {
             "GEMINI_API_KEY":    access("gemini-api-key"),
-            "ANTHROPIC_API_KEY": access("anthropic-api-key"),
-            "NEWS_API_KEY":      access("news-api-key"),
-            "YOUTUBE_API_KEY":   access("youtube-api-key"),
-            "ALPHA_VANTAGE_KEY": access("alpha-vantage-key"),
+            "ANTHROPIC_API_KEY": access_optional("anthropic-api-key"),
+            "NEWS_API_KEY":      access_optional("news-api-key"),
+            "YOUTUBE_API_KEY":   access_optional("youtube-api-key"),
+            "ALPHA_VANTAGE_KEY": access_optional("alpha-vantage-key"),
         }
     except Exception as e:
         logger.error(f"GCP Secret Manager load failed: {e}")

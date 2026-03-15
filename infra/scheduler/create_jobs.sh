@@ -21,103 +21,49 @@ YOUTUBE_URL="${YOUTUBE_AGENT_URL:-https://portfolio-ai-youtube-agent-epdj46agqq-
 USER_ID="${DEFAULT_USER_ID:?Set DEFAULT_USER_ID}"
 
 BODY="{\"user_id\": \"$USER_ID\"}"
-HEADERS="Content-Type:application/json,X-Scheduler-Secret:$SCHEDULER_SECRET"
+
+# Helper: create or update a scheduler job
+create_or_update_job() {
+  local NAME="$1" SCHEDULE="$2" TZ="$3" URI="$4" DEADLINE="$5"
+  local HDRS="Content-Type=application/json,X-Scheduler-Secret=$SCHEDULER_SECRET"
+  gcloud scheduler jobs create http "$NAME" \
+    --location="$REGION" \
+    --schedule="$SCHEDULE" \
+    --time-zone="$TZ" \
+    --uri="$URI" \
+    --message-body="$BODY" \
+    --headers="$HDRS" \
+    --attempt-deadline="$DEADLINE" \
+    --quiet 2>/dev/null || \
+  gcloud scheduler jobs update http "$NAME" \
+    --location="$REGION" \
+    --schedule="$SCHEDULE" \
+    --uri="$URI" \
+    --message-body="$BODY" \
+    --update-headers="$HDRS" \
+    --quiet
+}
 
 echo "Creating Cloud Scheduler jobs in project: $PROJECT_ID"
 
-# News agent — every 30 minutes, 9am–6pm IST (3:30am–12:30pm UTC), Mon-Fri
-gcloud scheduler jobs create http portfolio-ai-news \
-  --location="$REGION" \
-  --schedule="*/30 3-13 * * 1-5" \
-  --time-zone="Asia/Kolkata" \
-  --uri="$NEWS_URL/run" \
-  --message-body="$BODY" \
-  --headers="$HEADERS" \
-  --attempt-deadline=90s \
-  --quiet 2>/dev/null || \
-gcloud scheduler jobs update http portfolio-ai-news \
-  --location="$REGION" \
-  --schedule="*/30 3-13 * * 1-5" \
-  --uri="$NEWS_URL/run" \
-  --message-body="$BODY" \
-  --headers="$HEADERS" \
-  --quiet
+# News agent — every 30 minutes, 9am–6pm IST, Mon-Fri
+create_or_update_job "portfolio-ai-news" "*/30 3-13 * * 1-5" "Asia/Kolkata" "$NEWS_URL/run" "90s"
 echo "  ✓ news agent job created"
 
 # Fundamentals agent — every 6 hours
-gcloud scheduler jobs create http portfolio-ai-fundamentals \
-  --location="$REGION" \
-  --schedule="0 */6 * * *" \
-  --time-zone="Asia/Kolkata" \
-  --uri="$FUNDAMENTALS_URL/run" \
-  --message-body="$BODY" \
-  --headers="$HEADERS" \
-  --attempt-deadline=300s \
-  --quiet 2>/dev/null || \
-gcloud scheduler jobs update http portfolio-ai-fundamentals \
-  --location="$REGION" \
-  --schedule="0 */6 * * *" \
-  --uri="$FUNDAMENTALS_URL/run" \
-  --message-body="$BODY" \
-  --headers="$HEADERS" \
-  --quiet
+create_or_update_job "portfolio-ai-fundamentals" "0 */6 * * *" "Asia/Kolkata" "$FUNDAMENTALS_URL/run" "300s"
 echo "  ✓ fundamentals agent job created"
 
 # Technical agent — every 30 minutes, 9am–4pm IST, Mon-Fri
-gcloud scheduler jobs create http portfolio-ai-technical \
-  --location="$REGION" \
-  --schedule="*/30 3-11 * * 1-5" \
-  --time-zone="Asia/Kolkata" \
-  --uri="$TECHNICAL_URL/run" \
-  --message-body="$BODY" \
-  --headers="$HEADERS" \
-  --attempt-deadline=120s \
-  --quiet 2>/dev/null || \
-gcloud scheduler jobs update http portfolio-ai-technical \
-  --location="$REGION" \
-  --schedule="*/30 3-11 * * 1-5" \
-  --uri="$TECHNICAL_URL/run" \
-  --message-body="$BODY" \
-  --headers="$HEADERS" \
-  --quiet
+create_or_update_job "portfolio-ai-technical" "*/30 3-11 * * 1-5" "Asia/Kolkata" "$TECHNICAL_URL/run" "120s"
 echo "  ✓ technical agent job created"
 
-# Macro agent — once daily at 7am IST
-gcloud scheduler jobs create http portfolio-ai-macro \
-  --location="$REGION" \
-  --schedule="30 1 * * *" \
-  --time-zone="UTC" \
-  --uri="$MACRO_URL/run" \
-  --message-body="$BODY" \
-  --headers="$HEADERS" \
-  --attempt-deadline=300s \
-  --quiet 2>/dev/null || \
-gcloud scheduler jobs update http portfolio-ai-macro \
-  --location="$REGION" \
-  --schedule="30 1 * * *" \
-  --uri="$MACRO_URL/run" \
-  --message-body="$BODY" \
-  --headers="$HEADERS" \
-  --quiet
+# Macro agent — once daily at 7am IST (1:30 UTC)
+create_or_update_job "portfolio-ai-macro" "30 1 * * *" "UTC" "$MACRO_URL/run" "300s"
 echo "  ✓ macro agent job created"
 
 # YouTube agent — every 6 hours
-gcloud scheduler jobs create http portfolio-ai-youtube \
-  --location="$REGION" \
-  --schedule="0 2,8,14,20 * * *" \
-  --time-zone="UTC" \
-  --uri="$YOUTUBE_URL/run" \
-  --message-body="$BODY" \
-  --headers="$HEADERS" \
-  --attempt-deadline=300s \
-  --quiet 2>/dev/null || \
-gcloud scheduler jobs update http portfolio-ai-youtube \
-  --location="$REGION" \
-  --schedule="0 2,8,14,20 * * *" \
-  --uri="$YOUTUBE_URL/run" \
-  --message-body="$BODY" \
-  --headers="$HEADERS" \
-  --quiet
+create_or_update_job "portfolio-ai-youtube" "0 2,8,14,20 * * *" "UTC" "$YOUTUBE_URL/run" "300s"
 echo "  ✓ youtube agent job created"
 
 echo ""

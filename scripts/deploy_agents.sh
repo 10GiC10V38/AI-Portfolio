@@ -16,6 +16,17 @@ fi
 echo "Deploying to project: $PROJECT_ID in $REGION"
 echo ""
 
+# Load secrets from GCP Secret Manager for env vars
+echo "Loading secrets from GCP Secret Manager..."
+DB_URL=$(gcloud secrets versions access latest --secret=database-url)
+GEMINI_KEY=$(gcloud secrets versions access latest --secret=gemini-api-key)
+NEWS_KEY=$(gcloud secrets versions access latest --secret=news-api-key 2>/dev/null || echo "")
+YT_KEY=$(gcloud secrets versions access latest --secret=youtube-api-key 2>/dev/null || echo "")
+AV_KEY=$(gcloud secrets versions access latest --secret=alpha-vantage-key 2>/dev/null || echo "")
+SCHED_SECRET=$(gcloud secrets versions access latest --secret=scheduler-secret 2>/dev/null || echo "")
+
+ENV_VARS="SECRETS_SOURCE=env,DATABASE_URL=$DB_URL,GEMINI_API_KEY=$GEMINI_KEY,NEWS_API_KEY=$NEWS_KEY,YOUTUBE_API_KEY=$YT_KEY,ALPHA_VANTAGE_KEY=$AV_KEY,SCHEDULER_SECRET=$SCHED_SECRET,LLM_PROVIDER=gemini,LOG_LEVEL=INFO"
+
 AGENTS=("news" "fundamentals" "technical" "macro" "youtube" "advisor")
 
 for agent in "${AGENTS[@]}"; do
@@ -23,17 +34,17 @@ for agent in "${AGENTS[@]}"; do
   IMAGE="gcr.io/$PROJECT_ID/portfolio-ai-${agent}-agent:latest"
   SERVICE="portfolio-ai-${agent}-agent"
 
-  # Build shared/ into the agent context
-  # (Dockerfile copies ../../shared which needs to be in build context)
-  TMPDIR=$(mktemp -d)
-  cp -r "agents/$agent"/* "$TMPDIR/"
-  cp -r "shared"          "$TMPDIR/shared"
+  # Generate a cloudbuild.yaml pointing to the correct Dockerfile, then submit repo root
+  cat > /tmp/cloudbuild-${agent}.yaml << EOF
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', '${IMAGE}', '-f', 'agents/${agent}/Dockerfile', '.']
+images: ['${IMAGE}']
+EOF
 
-  gcloud builds submit "$TMPDIR" \
-    --tag "$IMAGE" \
+  gcloud builds submit . \
+    --config "/tmp/cloudbuild-${agent}.yaml" \
     --quiet
-
-  rm -rf "$TMPDIR"
 
   # Advisor gets different settings — on-demand HTTP server, not scheduler-triggered
   if [ "$agent" == "advisor" ]; then
@@ -45,7 +56,7 @@ for agent in "${AGENTS[@]}"; do
       --memory 512Mi \
       --min-instances 0 \
       --max-instances 2 \
-      --set-env-vars "SECRETS_SOURCE=gcp,GCP_PROJECT_ID=$PROJECT_ID,LLM_PROVIDER=claude,LOG_LEVEL=INFO" \
+      --set-env-vars "$ENV_VARS" \
       --quiet
   else
     gcloud run deploy "$SERVICE" \
@@ -56,7 +67,7 @@ for agent in "${AGENTS[@]}"; do
       --memory 512Mi \
       --min-instances 0 \
       --max-instances 1 \
-      --set-env-vars "SECRETS_SOURCE=gcp,GCP_PROJECT_ID=$PROJECT_ID,LLM_PROVIDER=claude,LOG_LEVEL=INFO" \
+      --set-env-vars "$ENV_VARS" \
       --quiet
   fi
 
