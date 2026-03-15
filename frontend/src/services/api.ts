@@ -102,11 +102,26 @@ export const auth = {
 
 // ── Portfolio ─────────────────────────────────────────────────────────────────
 
+export interface Fundamentals {
+  pe_ratio?:       string | null;
+  eps?:            string | null;
+  market_cap?:     string | null;
+  week_52_high?:   string | null;
+  week_52_low?:    string | null;
+  dividend_yield?: string | null;
+  beta?:           string | null;
+  profit_margin?:  string | null;
+  book_value?:     string | null;
+  pb_ratio?:       string | null;
+  description?:    string | null;
+}
+
 export interface HoldingDetail {
   holding:        Holding & { last_updated: string };
   alerts:         Alert[];
   total_invested: number;
   current_value:  number;
+  fundamentals:   Fundamentals | null;
 }
 
 export interface NewsArticle {

@@ -640,6 +640,38 @@ body {
   .app-main { max-width: 1000px; }
 }
 
+/* ── Fundamentals grid ────────────────────────────────────────────────────── */
+.fund-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+@media (max-width: 480px) { .fund-grid { grid-template-columns: repeat(2, 1fr); } }
+
+.fund-item {
+  background: var(--bg-elevated);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+}
+.fund-label { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+.fund-value  { font-size: 14px; font-weight: 600; color: var(--text); }
+
+.fund-desc-wrap { margin-top: 8px; }
+.fund-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  max-height: 60px;
+  overflow: hidden;
+  transition: max-height 0.2s;
+}
+.fund-desc.expanded { max-height: 500px; }
+.fund-desc-toggle {
+  background: none; border: none; color: var(--blue);
+  font-size: 12px; cursor: pointer; padding: 4px 0; margin-top: 2px;
+}
+
 /* ── News section ──────────────────────────────────────────────────────────── */
 .news-list { display: flex; flex-direction: column; gap: 0; }
 

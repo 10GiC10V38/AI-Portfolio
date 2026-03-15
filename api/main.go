@@ -664,12 +664,82 @@ func handleGetHoldingDetail(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Fetch fundamentals from Alpha Vantage (non-fatal, best-effort)
+	fundamentals := fetchAlphaVantageFundamentals(ticker, exchange)
+
 	jsonOK(w, map[string]interface{}{
 		"holding":        holding,
 		"alerts":         tickerAlerts,
 		"total_invested": avgCost * quantity,
 		"current_value":  lastPrice.Float64 * quantity,
+		"fundamentals":   fundamentals,
 	})
+}
+
+// fetchAlphaVantageFundamentals fetches key fundamentals for a ticker.
+// Returns nil map on error so the frontend can show "N/A".
+func fetchAlphaVantageFundamentals(ticker, exchange string) map[string]interface{} {
+	avKey := os.Getenv("ALPHA_VANTAGE_KEY")
+	if avKey == "" {
+		return nil
+	}
+
+	// Alpha Vantage uses BSE/NSE tickers with ".BSE" / ".NSE" suffix for Indian stocks
+	avTicker := ticker
+	if exchange == "BSE" {
+		avTicker = ticker + ".BSE"
+	} else if exchange == "NSE" {
+		avTicker = ticker + ".NSE"
+	}
+
+	client := &http.Client{Timeout: 8 * time.Second}
+
+	// OVERVIEW endpoint — PE, EPS, 52W high/low, market cap, dividend yield
+	ovURL := "https://www.alphavantage.co/query?function=OVERVIEW&symbol=" + url.QueryEscape(avTicker) + "&apikey=" + avKey
+	ovResp, err := client.Get(ovURL)
+	if err != nil || ovResp.StatusCode != 200 {
+		return nil
+	}
+	defer ovResp.Body.Close()
+
+	var ov map[string]interface{}
+	if err := json.NewDecoder(ovResp.Body).Decode(&ov); err != nil {
+		return nil
+	}
+
+	// Alpha Vantage returns empty object or "Note" field when rate-limited or not found
+	if _, hasNote := ov["Note"]; hasNote {
+		return nil
+	}
+	if _, hasInfo := ov["Information"]; hasInfo {
+		return nil
+	}
+	if ov["Symbol"] == nil {
+		return nil
+	}
+
+	pick := func(key string) interface{} {
+		v, ok := ov[key]
+		if !ok || v == "None" || v == "-" || v == "" {
+			return nil
+		}
+		return v
+	}
+
+	return map[string]interface{}{
+		"pe_ratio":       pick("PERatio"),
+		"eps":            pick("EPS"),
+		"market_cap":     pick("MarketCapitalization"),
+		"week_52_high":   pick("52WeekHigh"),
+		"week_52_low":    pick("52WeekLow"),
+		"dividend_yield": pick("DividendYield"),
+		"beta":           pick("Beta"),
+		"profit_margin":  pick("ProfitMargin"),
+		"revenue_ttm":    pick("RevenueTTM"),
+		"book_value":     pick("BookValue"),
+		"pb_ratio":       pick("PriceToBookRatio"),
+		"description":    pick("Description"),
+	}
 }
 
 // GET /alerts/ticker/:ticker — alerts for a specific ticker

@@ -1,6 +1,6 @@
 // frontend/src/screens/StockDetailScreen.tsx
 import { useEffect, useState, useCallback } from "react";
-import { portfolio, alerts as alertsApi, HoldingDetail, NewsArticle, YouTubeVideo } from "../api";
+import { portfolio, alerts as alertsApi, HoldingDetail, NewsArticle, YouTubeVideo, Fundamentals } from "../api";
 
 interface Props {
   ticker: string;
@@ -156,6 +156,9 @@ export function StockDetailScreen({ ticker, onBack, onAskAdvisor }: Props) {
         </div>
       </div>
 
+      {/* Fundamentals */}
+      {data.fundamentals && <FundamentalsCard f={data.fundamentals} />}
+
       {/* Alerts section */}
       <div className="card">
         <div className="stock-section-header">
@@ -260,6 +263,57 @@ export function StockDetailScreen({ ticker, onBack, onAskAdvisor }: Props) {
           ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+function fmt(v: string | null | undefined, prefix = "", suffix = ""): string {
+  if (!v || v === "None" || v === "-") return "—";
+  const n = parseFloat(v);
+  if (!isNaN(n)) {
+    if (Math.abs(n) >= 1e9) return prefix + (n / 1e9).toFixed(2) + "B" + suffix;
+    if (Math.abs(n) >= 1e6) return prefix + (n / 1e6).toFixed(2) + "M" + suffix;
+    return prefix + n.toFixed(2) + suffix;
+  }
+  return prefix + v + suffix;
+}
+
+function FundamentalsCard({ f }: { f: Fundamentals }) {
+  const [showDesc, setShowDesc] = useState(false);
+  const items = [
+    { label: "P/E Ratio",       value: fmt(f.pe_ratio) },
+    { label: "EPS",             value: fmt(f.eps, "₹") },
+    { label: "Market Cap",      value: fmt(f.market_cap, "₹") },
+    { label: "52W High",        value: fmt(f.week_52_high, "₹") },
+    { label: "52W Low",         value: fmt(f.week_52_low, "₹") },
+    { label: "P/B Ratio",       value: fmt(f.pb_ratio) },
+    { label: "Beta",            value: fmt(f.beta) },
+    { label: "Dividend Yield",  value: fmt(f.dividend_yield, "", "%") },
+    { label: "Profit Margin",   value: fmt(f.profit_margin, "", "%") },
+    { label: "Book Value",      value: fmt(f.book_value, "₹") },
+  ].filter(i => i.value !== "—");
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="card">
+      <h2 className="card-title">Fundamentals</h2>
+      <div className="fund-grid">
+        {items.map(({ label, value }) => (
+          <div key={label} className="fund-item">
+            <div className="fund-label">{label}</div>
+            <div className="fund-value">{value}</div>
+          </div>
+        ))}
+      </div>
+      {f.description && (
+        <div className="fund-desc-wrap">
+          <div className={`fund-desc ${showDesc ? "expanded" : ""}`}>{f.description}</div>
+          <button className="fund-desc-toggle" onClick={() => setShowDesc(!showDesc)}>
+            {showDesc ? "Show less" : "Show more"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
