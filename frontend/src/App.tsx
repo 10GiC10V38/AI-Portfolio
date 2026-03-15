@@ -87,9 +87,10 @@ function NavBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
 }
 
 export default function App() {
-  const [loggedIn, setLoggedIn]   = useState(auth.isLoggedIn());
-  const [activeTab, setActiveTab] = useState<Tab>("portfolio");
+  const [loggedIn, setLoggedIn]     = useState(auth.isLoggedIn());
+  const [activeTab, setActiveTab]   = useState<Tab>("portfolio");
   const [kitesyncing, setKiteSyncing] = useState(false);
+  const [portfolioKey, setPortfolioKey] = useState(0);
 
   useEffect(() => {
     setLoggedIn(auth.isLoggedIn());
@@ -107,7 +108,7 @@ export default function App() {
       window.history.replaceState({}, "", window.location.pathname);
       zerodha.sync(requestToken)
         .catch(() => {})
-        .finally(() => setKiteSyncing(false));
+        .finally(() => { setKiteSyncing(false); setPortfolioKey(k => k + 1); });
     }
   }, [loggedIn]);
 
@@ -128,7 +129,7 @@ export default function App() {
       )}
 
       <main className="app-main">
-        {activeTab === "portfolio" && <PortfolioScreen onConnectKite={() => window.location.href = zerodha.loginUrl()} />}
+        {activeTab === "portfolio" && <PortfolioScreen key={portfolioKey} onConnectKite={() => window.location.href = zerodha.loginUrl()} />}
         {activeTab === "alerts"    && <AlertsScreen />}
         {activeTab === "chat"      && <ChatScreen />}
       </main>
