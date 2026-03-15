@@ -75,6 +75,14 @@ body {
 /* Scrollable content */
 .app-main {
   flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.app-main > .screen,
+.app-main > .screen-loading,
+.app-main > .screen-error {
+  flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 20px 20px 8px;
@@ -260,8 +268,7 @@ body {
 /* ── Chat ───────────────────────────────────────────────────────────────────── */
 .chat-screen {
   display: flex; flex-direction: column;
-  height: calc(100dvh - var(--header-h) - var(--nav-h));
-  margin: -20px -20px -8px;
+  flex: 1; min-height: 0;
 }
 .message-thread {
   flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -441,7 +448,7 @@ body {
 
 /* ── Responsive ─────────────────────────────────────────────────────────────── */
 @media (max-width: 480px) {
-  .app-main     { padding: 14px 14px 6px; }
+  .app-main > .screen { padding: 14px 14px 6px; }
   .summary-row  { grid-template-columns: repeat(2, 1fr); }
   .summary-value { font-size: 18px; }
   .message-row  { max-width: 96%; }
@@ -450,7 +457,7 @@ body {
 }
 
 @media (min-width: 768px) {
-  .app-main { padding: 24px; }
+  .app-main > .screen { padding: 24px; }
   .message-thread { max-width: 720px; margin: 0 auto; width: 100%; }
   .chat-input-bar { max-width: 720px; margin: 0 auto; width: 100%; }
 }

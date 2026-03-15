@@ -168,6 +168,7 @@ export function ChatScreen() {
 
     setMessages(prev => [...prev, { role: "user", content }]);
     setInput("");
+    if (inputRef.current) inputRef.current.style.height = "auto";
     setLoading(true);
 
     try {
@@ -189,6 +190,12 @@ export function ChatScreen() {
       e.preventDefault();
       sendMessage();
     }
+  };
+
+  const autoResize = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    e.target.style.height = "auto";
+    e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
   };
 
   const isEmpty = messages.length === 0 && !historyLoading;
@@ -241,7 +248,7 @@ export function ChatScreen() {
           ref={inputRef}
           className="chat-input"
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={autoResize}
           onKeyDown={handleKeyDown}
           placeholder="Ask about your portfolio…"
           rows={1}
