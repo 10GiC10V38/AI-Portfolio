@@ -24,6 +24,18 @@ All agents use **Gemini Flash** (free tier) by default for polling. The Advisor 
 
 ---
 
+## Screenshots
+
+| Portfolio | Stock Detail |
+|---|---|
+| ![Portfolio list](screenshots/portfolio-list.png) | ![Stock detail](screenshots/stock-detail.png) |
+
+| Alerts | AI Advisor |
+|---|---|
+| ![Alerts tab](screenshots/alerts.png) | ![Advisor chat](screenshots/advisor-chat.png) |
+
+---
+
 ## Architecture
 
 ```

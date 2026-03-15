@@ -2,6 +2,12 @@
 
 Welcome! This guide will get you up and running in **under 10 minutes**.
 
+## What you're building
+
+| Portfolio | Stock Detail | AI Advisor |
+|---|---|---|
+| ![Portfolio](screenshots/portfolio-list.png) | ![Stock detail](screenshots/stock-detail.png) | ![Advisor](screenshots/advisor-chat.png) |
+
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
