@@ -52,17 +52,18 @@ def get_recent_alerts(user_id: str, limit: int = 10) -> list[dict]:
             return [dict(r) for r in cur.fetchall()]
 
 
-def get_session_history(session_id: str, limit: int = 20) -> list[dict]:
+def get_session_history(session_id: str, user_id: str, limit: int = 20) -> list[dict]:
+    """Return session history, scoped to user_id to prevent cross-user access."""
     with get_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
                 SELECT role, content FROM chat_messages
-                WHERE session_id = %s
+                WHERE session_id = %s AND user_id = %s
                 ORDER BY created_at DESC
                 LIMIT %s
                 """,
-                (session_id, limit),
+                (session_id, user_id, limit),
             )
             rows = cur.fetchall()
             return [dict(r) for r in reversed(rows)]   # chronological order
@@ -148,7 +149,7 @@ def run_chat(user_id: str, session_id: str, user_message: str) -> dict:
 
     # Load context on first message of session or every time (always fresh)
     context = build_context_snapshot(user_id)
-    history = get_session_history(session_id)
+    history = get_session_history(session_id, user_id)
 
     # Build messages for Claude
     messages = []

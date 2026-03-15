@@ -15,15 +15,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	_ "github.com/lib/pq"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/mux"
-	"github.com/lib/pq"
+	pq "github.com/lib/pq"
 	"github.com/rs/cors"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -35,9 +35,19 @@ var (
 	dbURL       = mustGetEnv("DATABASE_URL")
 	advisorURL  = getEnvOr("ADVISOR_URL", "http://localhost:8001")
 	environment = getEnvOr("ENVIRONMENT", "production")
+	allowedOrigins = getEnvOr("ALLOWED_ORIGINS", "") // comma-separated custom origins
 )
 
 var db *sql.DB
+
+// Input validation patterns
+var (
+	emailRegex  = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	uuidRegex   = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	tickerRegex = regexp.MustCompile(`^[A-Z0-9\-\.]{1,20}$`)
+)
+
+const maxRequestBodySize = 1 << 20 // 1 MB
 
 func mustGetEnv(key string) string {
 	v := os.Getenv(key)
@@ -93,6 +103,31 @@ func validateToken(tokenStr string) (*Claims, error) {
 }
 
 // ── Middleware ────────────────────────────────────────────────────────────────
+
+// securityHeaders adds standard security headers to every response
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		if environment == "production" {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// bodySizeLimit prevents oversized request bodies
+func bodySizeLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+		}
+		next(w, r)
+	}
+}
 
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -177,8 +212,18 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" || len(req.Password) < 8 {
-		jsonError(w, "Invalid request — email required, password min 8 chars", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	if !emailRegex.MatchString(req.Email) || len(req.Email) > 254 {
+		jsonError(w, "Invalid email address", http.StatusBadRequest)
+		return
+	}
+	if len(req.Password) < 8 || len(req.Password) > 128 {
+		jsonError(w, "Password must be 8-128 characters", http.StatusBadRequest)
 		return
 	}
 
@@ -249,7 +294,7 @@ func handleGetHoldings(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
 		SELECT ticker, exchange, company_name, sector, quantity, avg_cost,
 		       currency, last_price, last_updated_at,
-		       (last_price - avg_cost) / avg_cost * 100 AS unrealized_pct,
+		       (last_price - avg_cost) / NULLIF(avg_cost, 0) * 100 AS unrealized_pct,
 		       (last_price - avg_cost) * quantity AS unrealized_pnl
 		FROM holdings WHERE user_id = $1 ORDER BY sector, ticker`, userID)
 	if err != nil {
@@ -340,6 +385,10 @@ func handleGetAlerts(w http.ResponseWriter, r *http.Request) {
 func handleMarkAlertRead(w http.ResponseWriter, r *http.Request) {
 	userID := r.Header.Get("X-User-ID")
 	alertID := mux.Vars(r)["id"]
+	if !uuidRegex.MatchString(alertID) {
+		jsonError(w, "Invalid alert ID", http.StatusBadRequest)
+		return
+	}
 	_, err := db.Exec(
 		"UPDATE alerts SET is_read = TRUE WHERE id = $1 AND user_id = $2",
 		alertID, userID,
@@ -356,6 +405,10 @@ func handleMarkAlertRead(w http.ResponseWriter, r *http.Request) {
 func handleChatHistory(w http.ResponseWriter, r *http.Request) {
 	userID    := r.Header.Get("X-User-ID")
 	sessionID := r.URL.Query().Get("session_id")
+	if sessionID != "" && !uuidRegex.MatchString(sessionID) {
+		jsonError(w, "Invalid session ID format", http.StatusBadRequest)
+		return
+	}
 	limit     := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 200 {
@@ -525,6 +578,165 @@ func zerodhaChecksum(apiKey, requestToken, apiSecret string) string {
 	return fmt.Sprintf("%x", h)
 }
 
+// GET /portfolio/holdings/:ticker — single holding detail with alerts
+func handleGetHoldingDetail(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	ticker := strings.ToUpper(mux.Vars(r)["ticker"])
+	if !tickerRegex.MatchString(ticker) {
+		jsonError(w, "Invalid ticker symbol", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch holding
+	var exchange, currency string
+	var companyName, sector sql.NullString
+	var quantity, avgCost float64
+	var lastPrice, unrealizedPct, unrealizedPnl sql.NullFloat64
+	var lastUpdated sql.NullTime
+
+	err := db.QueryRow(`
+		SELECT ticker, exchange, company_name, sector, quantity, avg_cost,
+		       currency, last_price, last_updated_at,
+		       (last_price - avg_cost) / NULLIF(avg_cost, 0) * 100 AS unrealized_pct,
+		       (last_price - avg_cost) * quantity AS unrealized_pnl
+		FROM holdings WHERE user_id = $1 AND UPPER(ticker) = $2
+		LIMIT 1`, userID, ticker,
+	).Scan(&ticker, &exchange, &companyName, &sector, &quantity,
+		&avgCost, &currency, &lastPrice, &lastUpdated,
+		&unrealizedPct, &unrealizedPnl)
+
+	if err == sql.ErrNoRows {
+		jsonError(w, "Holding not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		jsonError(w, "Failed to fetch holding", http.StatusInternalServerError)
+		return
+	}
+
+	holding := map[string]interface{}{
+		"ticker":         ticker,
+		"exchange":       exchange,
+		"company_name":   companyName.String,
+		"sector":         sector.String,
+		"quantity":       quantity,
+		"avg_cost":       avgCost,
+		"currency":       currency,
+		"last_price":     lastPrice.Float64,
+		"unrealized_pct": unrealizedPct.Float64,
+		"unrealized_pnl": unrealizedPnl.Float64,
+		"last_updated":   lastUpdated.Time,
+	}
+
+	// Fetch recent alerts for this ticker
+	alertRows, err := db.Query(`
+		SELECT id, agent_type, severity, title, body, confidence_pct, is_read, created_at
+		FROM alerts
+		WHERE user_id = $1 AND UPPER(ticker) = $2 AND is_dismissed = FALSE
+		ORDER BY created_at DESC LIMIT 20`, userID, ticker)
+	if err != nil {
+		// Non-fatal — return holding without alerts
+		jsonOK(w, map[string]interface{}{"holding": holding, "alerts": []interface{}{}, "total_invested": avgCost * quantity, "current_value": lastPrice.Float64 * quantity})
+		return
+	}
+	defer alertRows.Close()
+
+	var tickerAlerts []map[string]interface{}
+	for alertRows.Next() {
+		var id, agentType, severity, title, body string
+		var confidencePct sql.NullInt64
+		var isRead bool
+		var createdAt time.Time
+
+		if err := alertRows.Scan(&id, &agentType, &severity, &title, &body,
+			&confidencePct, &isRead, &createdAt); err != nil {
+			continue
+		}
+		tickerAlerts = append(tickerAlerts, map[string]interface{}{
+			"id":             id,
+			"agent_type":     agentType,
+			"severity":       severity,
+			"title":          title,
+			"body":           body,
+			"confidence_pct": confidencePct.Int64,
+			"is_read":        isRead,
+			"created_at":     createdAt,
+		})
+	}
+
+	jsonOK(w, map[string]interface{}{
+		"holding":        holding,
+		"alerts":         tickerAlerts,
+		"total_invested": avgCost * quantity,
+		"current_value":  lastPrice.Float64 * quantity,
+	})
+}
+
+// GET /alerts/ticker/:ticker — alerts for a specific ticker
+func handleGetAlertsByTicker(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	ticker := strings.ToUpper(mux.Vars(r)["ticker"])
+	if !tickerRegex.MatchString(ticker) {
+		jsonError(w, "Invalid ticker symbol", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT id, agent_type, severity, title, body,
+		       confidence_pct, is_read, created_at
+		FROM alerts
+		WHERE user_id = $1 AND UPPER(ticker) = $2 AND is_dismissed = FALSE
+		ORDER BY created_at DESC LIMIT 50`, userID, ticker)
+	if err != nil {
+		jsonError(w, "Failed to fetch alerts", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var alerts []map[string]interface{}
+	for rows.Next() {
+		var id, agentType, severity, title, body string
+		var confidencePct sql.NullInt64
+		var isRead bool
+		var createdAt time.Time
+
+		if err := rows.Scan(&id, &agentType, &severity, &title, &body,
+			&confidencePct, &isRead, &createdAt); err != nil {
+			continue
+		}
+		alerts = append(alerts, map[string]interface{}{
+			"id":             id,
+			"agent_type":     agentType,
+			"severity":       severity,
+			"title":          title,
+			"body":           body,
+			"confidence_pct": confidencePct.Int64,
+			"is_read":        isRead,
+			"created_at":     createdAt,
+		})
+	}
+	jsonOK(w, alerts)
+}
+
+// PATCH /alerts/{id}/dismiss
+func handleDismissAlert(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	alertID := mux.Vars(r)["id"]
+	if !uuidRegex.MatchString(alertID) {
+		jsonError(w, "Invalid alert ID", http.StatusBadRequest)
+		return
+	}
+	_, err := db.Exec(
+		"UPDATE alerts SET is_dismissed = TRUE WHERE id = $1 AND user_id = $2",
+		alertID, userID,
+	)
+	if err != nil {
+		jsonError(w, "Failed to dismiss alert", http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]bool{"success": true})
+}
+
 // GET /health
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"status": "ok", "service": "api-gateway"})
@@ -549,36 +761,46 @@ func main() {
 
 	r := mux.NewRouter()
 
-	// Public routes (rate limited)
+	// Public routes (rate limited + body size limited)
 	r.HandleFunc("/health", handleHealth).Methods("GET")
-	r.HandleFunc("/auth/register", rateLimitMiddleware(5, time.Minute, handleRegister)).Methods("POST")
-	r.HandleFunc("/auth/login", rateLimitMiddleware(10, time.Minute, handleLogin)).Methods("POST")
+	r.HandleFunc("/auth/register", rateLimitMiddleware(5, time.Minute, bodySizeLimit(handleRegister))).Methods("POST")
+	r.HandleFunc("/auth/login", rateLimitMiddleware(10, time.Minute, bodySizeLimit(handleLogin))).Methods("POST")
 
-	// Protected routes (JWT required)
+	// Protected routes (JWT required + body size limited)
 	r.HandleFunc("/portfolio/holdings", authMiddleware(handleGetHoldings)).Methods("GET")
+	r.HandleFunc("/portfolio/holdings/{ticker}", authMiddleware(handleGetHoldingDetail)).Methods("GET")
 	r.HandleFunc("/alerts", authMiddleware(handleGetAlerts)).Methods("GET")
+	r.HandleFunc("/alerts/ticker/{ticker}", authMiddleware(handleGetAlertsByTicker)).Methods("GET")
 	r.HandleFunc("/alerts/{id}/read", authMiddleware(handleMarkAlertRead)).Methods("PATCH")
-	r.HandleFunc("/chat", authMiddleware(handleChat)).Methods("POST")
+	r.HandleFunc("/alerts/{id}/dismiss", authMiddleware(handleDismissAlert)).Methods("PATCH")
+	r.HandleFunc("/chat", authMiddleware(rateLimitMiddleware(20, time.Minute, bodySizeLimit(handleChat)))).Methods("POST")
 	r.HandleFunc("/chat/history", authMiddleware(handleChatHistory)).Methods("GET")
-	r.HandleFunc("/admin/zerodha/sync", authMiddleware(handleZerodhaSync)).Methods("POST")
+	r.HandleFunc("/admin/zerodha/sync", authMiddleware(bodySizeLimit(handleZerodhaSync))).Methods("POST")
 
-	// CORS — allow only our frontend origins
-	allowedOrigins := []string{
-		"https://your-app.vercel.app", // replace with your Vercel URL after deploy
-		"http://localhost:3000",
-	}
-	if environment == "development" {
-		allowedOrigins = append(allowedOrigins, "http://localhost:5173") // Vite default
-	}
-
+	// CORS — allow Vercel previews + localhost + custom origins
 	c := cors.New(cors.Options{
-		AllowedOrigins:   allowedOrigins,
+		AllowOriginFunc: func(origin string) bool {
+			if strings.HasSuffix(origin, ".vercel.app") ||
+				strings.HasPrefix(origin, "http://localhost") {
+				return true
+			}
+			// Allow custom origins from env (comma-separated)
+			if allowedOrigins != "" {
+				for _, o := range strings.Split(allowedOrigins, ",") {
+					if strings.TrimSpace(o) == origin {
+						return true
+					}
+				}
+			}
+			return false
+		},
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE"},
 		AllowedHeaders:   []string{"Authorization", "Content-Type"},
 		AllowCredentials: true,
+		MaxAge:           300,
 	})
 
 	port := getEnvOr("PORT", "8080")
 	log.Printf("API gateway starting on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, c.Handler(r)))
+	log.Fatal(http.ListenAndServe(":"+port, securityHeaders(c.Handler(r))))
 }

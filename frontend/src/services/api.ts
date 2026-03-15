@@ -102,8 +102,18 @@ export const auth = {
 
 // ── Portfolio ─────────────────────────────────────────────────────────────────
 
+export interface HoldingDetail {
+  holding:        Holding & { last_updated: string };
+  alerts:         Alert[];
+  total_invested: number;
+  current_value:  number;
+}
+
 export const portfolio = {
   getHoldings: () => request<Holding[]>("/portfolio/holdings"),
+
+  getHoldingDetail: (ticker: string) =>
+    request<HoldingDetail>(`/portfolio/holdings/${encodeURIComponent(ticker)}`),
 };
 
 // ── Zerodha ───────────────────────────────────────────────────────────────────
@@ -126,8 +136,14 @@ export const zerodha = {
 export const alerts = {
   getAll: (limit = 50) => request<Alert[]>(`/alerts?limit=${limit}`),
 
+  getByTicker: (ticker: string) =>
+    request<Alert[]>(`/alerts/ticker/${encodeURIComponent(ticker)}`),
+
   markRead: (id: string) =>
-    request<{ success: boolean }>(`/alerts/${id}/read`, { method: "PATCH" }),
+    request<{ success: boolean }>(`/alerts/${encodeURIComponent(id)}/read`, { method: "PATCH" }),
+
+  dismiss: (id: string) =>
+    request<{ success: boolean }>(`/alerts/${encodeURIComponent(id)}/dismiss`, { method: "PATCH" }),
 };
 
 // ── Chat ──────────────────────────────────────────────────────────────────────

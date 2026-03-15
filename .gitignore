@@ -36,3 +36,6 @@ frontend/.vite/
 
 # Logs
 *.log
+
+# GCP SDK (local install, not for repo)
+infra/docker/Google-Cloud/

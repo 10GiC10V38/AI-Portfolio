@@ -7,6 +7,7 @@ DATABASE_URL comes from env (local) or GCP Secret Manager (cloud).
 """
 from __future__ import annotations
 import os
+import re
 import logging
 import uuid
 from contextlib import contextmanager
@@ -15,6 +16,10 @@ from typing import Optional
 import psycopg2
 from psycopg2 import pool
 from psycopg2.extras import RealDictCursor, Json
+
+# Input validation
+_TICKER_RE = re.compile(r'^[A-Z0-9\-\.]{1,20}$')
+_VALID_SEVERITIES = {"critical", "warning", "info", "opportunity"}
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +97,18 @@ def write_alert(
     confidence_pct: Optional[int] = None,
 ) -> str:
     """Insert an alert row and return its UUID."""
+    # Validate severity
+    if severity not in _VALID_SEVERITIES:
+        raise ValueError(f"Invalid severity: {severity!r}")
+    # Validate ticker format (reject potential XSS/injection)
+    if ticker and not _TICKER_RE.match(ticker.upper()):
+        logger.warning(f"Invalid ticker rejected: {ticker!r}")
+        ticker = None
+    elif ticker:
+        ticker = ticker.upper()
+    # Sanitize title and body length
+    title = title[:500] if title else ""
+    body = body[:5000] if body else ""
     alert_id = str(uuid.uuid4())
     with get_conn() as conn:
         with conn.cursor() as cur:

@@ -19,12 +19,13 @@ const STARTER_PROMPTS = [
   "Am I overweight any sector? Should I rebalance?",
   "Which holding has the best fundamentals right now?",
   "Summarise all alerts from this week for me.",
+  "Which cyclical stocks should I look at buying in tranches?",
+  "What's the best tranche buying strategy for volatile stocks?",
 ];
 
-// ── Inline markdown renderer (no external deps) ──────────────────────────────
+// ── Inline markdown renderer ──────────────────────────────────────────────
 
 function renderInline(text: string): React.ReactNode[] {
-  // Process **bold**, *italic*, `code`
   const parts: React.ReactNode[] = [];
   const re = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
   let last = 0, m: RegExpExecArray | null;
@@ -48,7 +49,6 @@ function renderMarkdown(text: string): React.ReactNode {
   while (i < lines.length) {
     const line = lines[i];
 
-    // Headings
     if (line.startsWith("### ")) {
       nodes.push(<h3 key={key++}>{renderInline(line.slice(4))}</h3>);
       i++; continue;
@@ -62,7 +62,6 @@ function renderMarkdown(text: string): React.ReactNode {
       i++; continue;
     }
 
-    // Unordered list — collect consecutive
     if (/^[-*] /.test(line)) {
       const items: React.ReactNode[] = [];
       while (i < lines.length && /^[-*] /.test(lines[i])) {
@@ -73,7 +72,6 @@ function renderMarkdown(text: string): React.ReactNode {
       continue;
     }
 
-    // Ordered list — collect consecutive
     if (/^\d+\. /.test(line)) {
       const items: React.ReactNode[] = [];
       while (i < lines.length && /^\d+\. /.test(lines[i])) {
@@ -84,25 +82,22 @@ function renderMarkdown(text: string): React.ReactNode {
       continue;
     }
 
-    // Horizontal rule
     if (/^---+$/.test(line.trim())) {
       nodes.push(<hr key={key++} />);
       i++; continue;
     }
 
-    // Blank line — skip (paragraph spacing handled by CSS)
     if (line.trim() === "") {
       i++; continue;
     }
 
-    // Paragraph
     nodes.push(<p key={key++}>{renderInline(line)}</p>);
     i++;
   }
   return <>{nodes}</>;
 }
 
-// ── Components ───────────────────────────────────────────────────────────────
+// ── Components ────────────────────────────────────────────────────────────
 
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
@@ -129,7 +124,12 @@ function TypingIndicator() {
   );
 }
 
-export function ChatScreen() {
+interface Props {
+  prefillMessage?: string | null;
+  onPrefillConsumed?: () => void;
+}
+
+export function ChatScreen({ prefillMessage, onPrefillConsumed }: Props) {
   const [messages, setMessages]   = useState<ChatMessage[]>([]);
   const [input, setInput]         = useState("");
   const [loading, setLoading]     = useState(false);
@@ -151,7 +151,7 @@ export function ChatScreen() {
           setMessages(history.map(m => ({ role: m.role, content: m.content })));
         }
       })
-      .catch(() => {}) // silently ignore — empty session is fine
+      .catch(() => {})
       .finally(() => setHistoryLoading(false));
   }, [sessionId]);
 
@@ -184,6 +184,14 @@ export function ChatScreen() {
       inputRef.current?.focus();
     }
   }, [input, loading, sessionId]);
+
+  // Handle prefill from stock detail → advisor
+  useEffect(() => {
+    if (prefillMessage && !loading && !historyLoading) {
+      sendMessage(prefillMessage);
+      onPrefillConsumed?.();
+    }
+  }, [prefillMessage, historyLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

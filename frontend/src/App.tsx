@@ -3,24 +3,31 @@ import { useState, useEffect } from "react";
 import { PortfolioScreen } from "./screens/PortfolioScreen";
 import { AlertsScreen }    from "./screens/AlertsScreen";
 import { ChatScreen }      from "./screens/ChatScreen";
+import { StockDetailScreen } from "./screens/StockDetailScreen";
 import { auth }            from "./api";
 import { zerodha }         from "./services/api";
 import "./index.css";
 
 type Tab = "portfolio" | "alerts" | "chat";
 
+interface StockView {
+  ticker: string;
+}
+
 function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
   const [error, setError]       = useState<string | null>(null);
   const [loading, setLoading]   = useState(false);
+  const [isRegister, setIsRegister] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
-      const resp = await auth.login(email, password);
+      const action = isRegister ? auth.register : auth.login;
+      const resp = await action(email, password);
       localStorage.setItem("token",   resp.token);
       localStorage.setItem("user_id", resp.user_id);
       onLogin();
@@ -48,15 +55,23 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
           />
           <input
             type="password"
-            placeholder="Password"
+            placeholder="Password (min 8 characters)"
             value={password}
             onChange={e => setPassword(e.target.value)}
             required
-            autoComplete="current-password"
+            minLength={8}
+            autoComplete={isRegister ? "new-password" : "current-password"}
           />
           {error && <div className="login-error">{error}</div>}
           <button type="submit" disabled={loading}>
-            {loading ? "Signing in…" : "Sign in"}
+            {loading ? (isRegister ? "Creating account…" : "Signing in…") : (isRegister ? "Create Account" : "Sign In")}
+          </button>
+          <button
+            type="button"
+            className="login-toggle"
+            onClick={() => { setIsRegister(!isRegister); setError(null); }}
+          >
+            {isRegister ? "Already have an account? Sign in" : "New here? Create an account"}
           </button>
         </form>
       </div>
@@ -64,7 +79,7 @@ function LoginScreen({ onLogin }: { onLogin: () => void }) {
   );
 }
 
-function NavBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {
+function NavBar({ active, onChange, unreadAlerts }: { active: Tab; onChange: (t: Tab) => void; unreadAlerts: number }) {
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: "portfolio", label: "Portfolio", icon: "📈" },
     { id: "alerts",    label: "Alerts",    icon: "🔔" },
@@ -78,7 +93,12 @@ function NavBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void 
           className={`nav-item ${active === t.id ? "active" : ""}`}
           onClick={() => onChange(t.id)}
         >
-          <span className="nav-icon">{t.icon}</span>
+          <span className="nav-icon">
+            {t.icon}
+            {t.id === "alerts" && unreadAlerts > 0 && (
+              <span className="nav-badge">{unreadAlerts > 99 ? "99+" : unreadAlerts}</span>
+            )}
+          </span>
           <span className="nav-label">{t.label}</span>
         </button>
       ))}
@@ -91,12 +111,15 @@ export default function App() {
   const [activeTab, setActiveTab]   = useState<Tab>("portfolio");
   const [kitesyncing, setKiteSyncing] = useState(false);
   const [portfolioKey, setPortfolioKey] = useState(0);
+  const [stockView, setStockView]   = useState<StockView | null>(null);
+  const [advisorPrefill, setAdvisorPrefill] = useState<string | null>(null);
+  const [unreadAlerts, setUnreadAlerts] = useState(0);
 
   useEffect(() => {
     setLoggedIn(auth.isLoggedIn());
   }, []);
 
-  // Handle Kite OAuth callback — detect ?request_token=xxx in URL after redirect
+  // Handle Kite OAuth callback
   useEffect(() => {
     if (!auth.isLoggedIn()) return;
     const params = new URLSearchParams(window.location.search);
@@ -104,13 +127,27 @@ export default function App() {
     const status       = params.get("status");
     if (requestToken && status === "success") {
       setKiteSyncing(true);
-      // Clean the URL immediately so refresh doesn't re-trigger
       window.history.replaceState({}, "", window.location.pathname);
       zerodha.sync(requestToken)
         .catch(() => {})
         .finally(() => { setKiteSyncing(false); setPortfolioKey(k => k + 1); });
     }
   }, [loggedIn]);
+
+  const handleStockSelect = (ticker: string) => {
+    setStockView({ ticker });
+  };
+
+  const handleAskAdvisor = (question: string) => {
+    setAdvisorPrefill(question);
+    setStockView(null);
+    setActiveTab("chat");
+  };
+
+  const handleTabChange = (t: Tab) => {
+    setStockView(null);
+    setActiveTab(t);
+  };
 
   if (!loggedIn) {
     return <LoginScreen onLogin={() => setLoggedIn(true)} />;
@@ -129,12 +166,38 @@ export default function App() {
       )}
 
       <main className="app-main">
-        {activeTab === "portfolio" && <PortfolioScreen key={portfolioKey} onConnectKite={() => window.location.href = zerodha.loginUrl()} />}
-        {activeTab === "alerts"    && <AlertsScreen />}
-        {activeTab === "chat"      && <ChatScreen />}
+        {stockView ? (
+          <StockDetailScreen
+            ticker={stockView.ticker}
+            onBack={() => setStockView(null)}
+            onAskAdvisor={handleAskAdvisor}
+          />
+        ) : (
+          <>
+            {activeTab === "portfolio" && (
+              <PortfolioScreen
+                key={portfolioKey}
+                onConnectKite={() => window.location.href = zerodha.loginUrl()}
+                onStockSelect={handleStockSelect}
+              />
+            )}
+            {activeTab === "alerts" && (
+              <AlertsScreen
+                onStockSelect={handleStockSelect}
+                onUnreadCount={setUnreadAlerts}
+              />
+            )}
+            {activeTab === "chat" && (
+              <ChatScreen
+                prefillMessage={advisorPrefill}
+                onPrefillConsumed={() => setAdvisorPrefill(null)}
+              />
+            )}
+          </>
+        )}
       </main>
 
-      <NavBar active={activeTab} onChange={setActiveTab} />
+      <NavBar active={activeTab} onChange={handleTabChange} unreadAlerts={unreadAlerts} />
     </div>
   );
 }
