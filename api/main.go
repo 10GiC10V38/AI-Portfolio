@@ -737,6 +737,156 @@ func handleDismissAlert(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]bool{"success": true})
 }
 
+// GET /portfolio/news/{ticker} — live news from NewsAPI for a specific stock
+func handleGetNewsForTicker(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	ticker := strings.ToUpper(mux.Vars(r)["ticker"])
+	if !tickerRegex.MatchString(ticker) {
+		jsonError(w, "Invalid ticker symbol", http.StatusBadRequest)
+		return
+	}
+
+	newsAPIKey := os.Getenv("NEWS_API_KEY")
+	if newsAPIKey == "" {
+		jsonOK(w, map[string]interface{}{"articles": []interface{}{}, "message": "News API key not configured"})
+		return
+	}
+
+	// Get company name from holdings to improve search
+	var companyName sql.NullString
+	db.QueryRow("SELECT company_name FROM holdings WHERE user_id = $1 AND UPPER(ticker) = $2", userID, ticker).Scan(&companyName)
+
+	// Build query: prefer company name for better results, fall back to ticker
+	query := ticker
+	if companyName.Valid && companyName.String != "" {
+		query = "\"" + companyName.String + "\" OR " + ticker
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	newsURL := "https://newsapi.org/v2/everything?q=" + url.QueryEscape(query) +
+		"&apiKey=" + newsAPIKey +
+		"&language=en&sortBy=publishedAt&pageSize=10"
+
+	resp, err := client.Get(newsURL)
+	if err != nil || resp.StatusCode != 200 {
+		jsonOK(w, map[string]interface{}{"articles": []interface{}{}, "error": "Failed to fetch news"})
+		return
+	}
+	defer resp.Body.Close()
+
+	var newsResp struct {
+		Articles []struct {
+			Title       string `json:"title"`
+			Description string `json:"description"`
+			URL         string `json:"url"`
+			Source      struct {
+				Name string `json:"name"`
+			} `json:"source"`
+			PublishedAt string `json:"publishedAt"`
+		} `json:"articles"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&newsResp); err != nil {
+		jsonOK(w, map[string]interface{}{"articles": []interface{}{}})
+		return
+	}
+
+	articles := make([]map[string]interface{}, 0, len(newsResp.Articles))
+	for _, a := range newsResp.Articles {
+		if a.Title == "" || a.Title == "[Removed]" {
+			continue
+		}
+		articles = append(articles, map[string]interface{}{
+			"title":        a.Title,
+			"description":  a.Description,
+			"url":          a.URL,
+			"source":       a.Source.Name,
+			"published_at": a.PublishedAt,
+		})
+	}
+	jsonOK(w, map[string]interface{}{"articles": articles, "ticker": ticker})
+}
+
+// GET /portfolio/youtube/{ticker} — YouTube insights stored from channel monitoring
+func handleGetYouTubeInsights(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("X-User-ID")
+	ticker := strings.ToUpper(mux.Vars(r)["ticker"])
+	if !tickerRegex.MatchString(ticker) {
+		jsonError(w, "Invalid ticker symbol", http.StatusBadRequest)
+		return
+	}
+
+	// Get channels this user is subscribed to
+	channelRows, err := db.Query(
+		"SELECT channel_id FROM youtube_channels WHERE user_id = $1 AND is_active = TRUE", userID)
+	if err != nil {
+		jsonOK(w, map[string]interface{}{"videos": []interface{}{}})
+		return
+	}
+	defer channelRows.Close()
+
+	channelIDs := make([]string, 0)
+	for channelRows.Next() {
+		var id string
+		if channelRows.Scan(&id) == nil {
+			channelIDs = append(channelIDs, id)
+		}
+	}
+
+	if len(channelIDs) == 0 {
+		jsonOK(w, map[string]interface{}{"videos": []interface{}{}, "message": "No YouTube channels configured"})
+		return
+	}
+
+	// Find videos that mention this ticker
+	rows, err := db.Query(`
+		SELECT video_id, title, published_at, insights, channel_id
+		FROM youtube_videos
+		WHERE channel_id = ANY($1)
+		  AND $2 = ANY(tickers_mentioned)
+		  AND processed_at IS NOT NULL
+		ORDER BY published_at DESC
+		LIMIT 5`, pq.Array(channelIDs), ticker)
+	if err != nil {
+		jsonOK(w, map[string]interface{}{"videos": []interface{}{}})
+		return
+	}
+	defer rows.Close()
+
+	videos := make([]map[string]interface{}, 0)
+	for rows.Next() {
+		var videoID, title, channelID string
+		var publishedAt time.Time
+		var insightsJSON []byte
+		if err := rows.Scan(&videoID, &title, &publishedAt, &insightsJSON, &channelID); err != nil {
+			continue
+		}
+		var insights map[string]interface{}
+		json.Unmarshal(insightsJSON, &insights)
+
+		// Extract the insight for this specific ticker
+		var tickerInsight map[string]interface{}
+		if insightsList, ok := insights["insights"].([]interface{}); ok {
+			for _, ins := range insightsList {
+				if insMap, ok := ins.(map[string]interface{}); ok {
+					if insMap["ticker"] == ticker {
+						tickerInsight = insMap
+						break
+					}
+				}
+			}
+		}
+
+		videos = append(videos, map[string]interface{}{
+			"video_id":     videoID,
+			"title":        title,
+			"published_at": publishedAt,
+			"url":          "https://youtube.com/watch?v=" + videoID,
+			"insight":      tickerInsight,
+		})
+	}
+	jsonOK(w, map[string]interface{}{"videos": videos, "ticker": ticker})
+}
+
 // GET /health
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"status": "ok", "service": "api-gateway"})
@@ -769,6 +919,8 @@ func main() {
 	// Protected routes (JWT required + body size limited)
 	r.HandleFunc("/portfolio/holdings", authMiddleware(handleGetHoldings)).Methods("GET")
 	r.HandleFunc("/portfolio/holdings/{ticker}", authMiddleware(handleGetHoldingDetail)).Methods("GET")
+	r.HandleFunc("/portfolio/news/{ticker}", authMiddleware(handleGetNewsForTicker)).Methods("GET")
+	r.HandleFunc("/portfolio/youtube/{ticker}", authMiddleware(handleGetYouTubeInsights)).Methods("GET")
 	r.HandleFunc("/alerts", authMiddleware(handleGetAlerts)).Methods("GET")
 	r.HandleFunc("/alerts/ticker/{ticker}", authMiddleware(handleGetAlertsByTicker)).Methods("GET")
 	r.HandleFunc("/alerts/{id}/read", authMiddleware(handleMarkAlertRead)).Methods("PATCH")

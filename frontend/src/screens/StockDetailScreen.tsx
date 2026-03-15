@@ -1,6 +1,6 @@
 // frontend/src/screens/StockDetailScreen.tsx
 import { useEffect, useState, useCallback } from "react";
-import { portfolio, alerts as alertsApi, HoldingDetail } from "../api";
+import { portfolio, alerts as alertsApi, HoldingDetail, NewsArticle, YouTubeVideo } from "../api";
 
 interface Props {
   ticker: string;
@@ -23,21 +23,38 @@ function timeAgo(isoString: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+const STANCE_COLOR: Record<string, string> = {
+  bullish: "#1D9E75", bearish: "#E24B4A", neutral: "#888",
+};
+
 export function StockDetailScreen({ ticker, onBack, onAskAdvisor }: Props) {
   const [data, setData] = useState<HoldingDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedAlert, setExpandedAlert] = useState<string | null>(null);
+  const [news, setNews] = useState<NewsArticle[]>([]);
+  const [newsLoading, setNewsLoading] = useState(true);
+  const [ytVideos, setYtVideos] = useState<YouTubeVideo[]>([]);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
+    setNewsLoading(true);
+
     portfolio.getHoldingDetail(ticker)
       .then(d => {
         setData({ ...d, alerts: d.alerts ?? [] });
         setLoading(false);
       })
       .catch(e => { setError(e.message); setLoading(false); });
+
+    portfolio.getNews(ticker)
+      .then(r => { setNews(r.articles ?? []); setNewsLoading(false); })
+      .catch(() => setNewsLoading(false));
+
+    portfolio.getYouTubeInsights(ticker)
+      .then(r => setYtVideos(r.videos ?? []))
+      .catch(() => {});
   }, [ticker]);
 
   const handleDismiss = useCallback(async (id: string, e: React.MouseEvent) => {
@@ -180,6 +197,53 @@ export function StockDetailScreen({ ticker, onBack, onAskAdvisor }: Props) {
           </div>
         )}
       </div>
+
+      {/* Live news */}
+      <div className="card">
+        <h2 className="card-title">Latest News</h2>
+        {newsLoading ? (
+          <div className="stock-empty"><div className="spinner" style={{ margin: "8px auto" }} /></div>
+        ) : news.length === 0 ? (
+          <div className="stock-empty">No recent news found for {ticker}</div>
+        ) : (
+          <div className="news-list">
+            {news.map((a, i) => (
+              <a key={i} href={a.url} target="_blank" rel="noopener noreferrer" className="news-item">
+                <div className="news-title">{a.title}</div>
+                <div className="news-meta">
+                  <span className="news-source">{a.source}</span>
+                  <span className="news-time">{timeAgo(a.published_at)}</span>
+                </div>
+                {a.description && <div className="news-desc">{a.description}</div>}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* YouTube insights */}
+      {ytVideos.length > 0 && (
+        <div className="card">
+          <h2 className="card-title">YouTube Insights</h2>
+          <div className="yt-list">
+            {ytVideos.map(v => (
+              <a key={v.video_id} href={v.url} target="_blank" rel="noopener noreferrer" className="yt-item">
+                <div className="yt-thumb">▶</div>
+                <div className="yt-info">
+                  <div className="yt-title">{v.title}</div>
+                  <div className="yt-meta">{timeAgo(v.published_at)}</div>
+                  {v.insight && (
+                    <div className="yt-stance" style={{ color: STANCE_COLOR[v.insight.stance] }}>
+                      {v.insight.stance.toUpperCase()} · {v.insight.confidence} confidence
+                    </div>
+                  )}
+                  {v.insight?.summary && <div className="yt-summary">{v.insight.summary}</div>}
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Quick advisor actions */}
       <div className="card">

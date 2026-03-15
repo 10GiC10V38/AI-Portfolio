@@ -109,11 +109,38 @@ export interface HoldingDetail {
   current_value:  number;
 }
 
+export interface NewsArticle {
+  title:        string;
+  description:  string;
+  url:          string;
+  source:       string;
+  published_at: string;
+}
+
+export interface YouTubeVideo {
+  video_id:     string;
+  title:        string;
+  published_at: string;
+  url:          string;
+  insight: {
+    stance:      "bullish" | "bearish" | "neutral";
+    confidence:  string;
+    summary:     string;
+    key_points:  string[];
+  } | null;
+}
+
 export const portfolio = {
   getHoldings: () => request<Holding[]>("/portfolio/holdings"),
 
   getHoldingDetail: (ticker: string) =>
     request<HoldingDetail>(`/portfolio/holdings/${encodeURIComponent(ticker)}`),
+
+  getNews: (ticker: string) =>
+    request<{ articles: NewsArticle[]; ticker: string }>(`/portfolio/news/${encodeURIComponent(ticker)}`),
+
+  getYouTubeInsights: (ticker: string) =>
+    request<{ videos: YouTubeVideo[]; ticker: string }>(`/portfolio/youtube/${encodeURIComponent(ticker)}`),
 };
 
 // ── Zerodha ───────────────────────────────────────────────────────────────────
