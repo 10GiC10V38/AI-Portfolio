@@ -14,13 +14,13 @@ A self-hosted, AI-powered portfolio monitoring and advisory system.
 | Agent | What it monitors | How often |
 |---|---|---|
 | **News** | Headlines from NewsAPI + RSS feeds → sentiment per holding | Every 30 min |
-| **Fundamentals** | P/E, P/B, ROE, debt ratios via yfinance | Every 6h |
+| **Fundamentals** | P/E, P/B, EPS, Market Cap, 52W High/Low via Alpha Vantage (live on stock detail) | Every 6h |
 | **Technical** | RSI, MACD, Bollinger Bands, moving averages | Every 30 min |
 | **Macro** | FRED data (interest rates, CPI, GDP, yield curve) + India RSS | Daily 7am IST |
 | **YouTube** | Transcripts from finance channels → insights per holding | Every 6h |
 | **Advisor** | Chat interface with full portfolio context | On-demand |
 
-All agents use **Gemini Flash** (free tier) by default. Switch to Claude for higher quality analysis.
+All agents use **Gemini Flash** (free tier) by default for polling. The Advisor uses **Claude Haiku** for routine responses and **Claude Sonnet** for deep analysis.
 
 ---
 
@@ -32,7 +32,7 @@ All agents use **Gemini Flash** (free tier) by default. Switch to Claude for hig
 └────────────────────────┬────────────────────────────────────┘
                          │ HTTPS
 ┌────────────────────────▼────────────────────────────────────┐
-│  Go API Gateway  (Render.com free tier)                     │
+│  Go API Gateway  (Google Cloud Run)                         │
 │  JWT auth · rate limiting · CORS · Zerodha sync             │
 └────┬───────────────────────────────────────────────┬────────┘
      │ SQL                                           │ HTTP
@@ -44,7 +44,7 @@ All agents use **Gemini Flash** (free tier) by default. Switch to Claude for hig
 
 **Stack:**
 - Agents: Python 3.12 + FastAPI → Google Cloud Run (free tier)
-- API gateway: Go → Render.com (free tier)
+- API gateway: Go → Google Cloud Run (free tier)
 - Frontend: React + TypeScript + Vite → Vercel (free tier)
 - Database: Neon PostgreSQL (free tier)
 - Scheduling: GCP Cloud Scheduler
@@ -109,7 +109,7 @@ curl -X POST http://localhost:8080/auth/register \
 cd frontend
 npm install
 npm run dev
-# Open http://localhost:3000
+# Open http://localhost:5173
 ```
 
 ### 5. Add holdings manually (or sync from Zerodha)
@@ -141,21 +141,28 @@ VALUES ('YOUR_USER_ID', 'RELIANCE', 'NSE', 'Reliance Industries', 'Energy', 10, 
 
 ### 6. Trigger agents manually (optional)
 
+Each agent runs as its own container and exposes `POST /run`. Trigger from the host:
+
 ```bash
 SECRET="your_scheduler_secret"
 USER_ID="your_user_id"
 
-# Run news agent
-curl -X POST http://localhost:8001/run \  # wrong port — exec into container
-# Easier:
-docker exec portfolio-ai_agent-news_1 python3 -c "
-import urllib.request, json
-req = urllib.request.Request('http://localhost:8080/run',
-  data=json.dumps({'user_id':'$USER_ID'}).encode(),
-  headers={'Content-Type':'application/json','X-Scheduler-Secret':'$SECRET'},
-  method='POST')
-with urllib.request.urlopen(req, timeout=90) as r: print(r.read().decode())
-"
+# News agent (port 8002 in docker-compose)
+curl -s -X POST http://localhost:8002/run \
+  -H "Content-Type: application/json" \
+  -H "X-Scheduler-Secret: $SECRET" \
+  -d "{\"user_id\": \"$USER_ID\"}"
+
+# Fundamentals agent (port 8003)
+curl -s -X POST http://localhost:8003/run \
+  -H "Content-Type: application/json" \
+  -H "X-Scheduler-Secret: $SECRET" \
+  -d "{\"user_id\": \"$USER_ID\"}"
+```
+
+Check `infra/docker/docker-compose.yml` for the port assigned to each agent. Successful response looks like:
+```json
+{"status": "success", "alerts_fired": 2, "tokens_used": 850}
 ```
 
 ---
@@ -171,11 +178,11 @@ with urllib.request.urlopen(req, timeout=90) as r: print(r.read().decode())
 ### Secrets — GCP Secret Manager
 
 ```bash
-# One-time setup
+# One-time setup (creates secrets in GCP Secret Manager)
 bash scripts/setup_gcp.sh
-
-# Set SECRETS_SOURCE=gcp in Cloud Run env vars
 ```
+
+Secrets are read from GCP Secret Manager at **deploy time** by `deploy_agents.sh` and passed as environment variables (`SECRETS_SOURCE=env`). You do not need to set `SECRETS_SOURCE=gcp` in Cloud Run — the deploy script handles it.
 
 ### Agents — Google Cloud Run
 
@@ -186,18 +193,29 @@ bash scripts/deploy_agents.sh
 
 Each agent becomes a Cloud Run service. Cloud Scheduler triggers them on the polling intervals above.
 
-### API Gateway — Render.com
+### API Gateway — Google Cloud Run
 
-1. Connect your GitHub repo at [render.com](https://render.com)
-2. New Web Service → root directory: `api/` → runtime: Go
-3. Set environment variables from `.env.example`
-4. Auto-deploys on every push to `main`
+The gateway is deployed alongside the agents via `deploy_agents.sh`:
+
+```bash
+# Deploys all 6 agents + the Go API gateway to Cloud Run
+bash scripts/deploy_agents.sh
+```
+
+Or deploy the gateway manually:
+```bash
+gcloud run deploy portfolio-ai-gateway \
+  --source api/ \
+  --region asia-south1 \
+  --allow-unauthenticated \
+  --set-env-vars "JWT_SECRET=...,DATABASE_URL=..."
+```
 
 ### Frontend — Vercel
 
 ```bash
-# Set VITE_API_URL to your Render URL
-echo "VITE_API_URL=https://your-api.onrender.com" > frontend/.env.production
+# Set VITE_API_URL to your Cloud Run gateway URL
+echo "VITE_API_URL=https://portfolio-ai-gateway-xxxx-uc.a.run.app" > frontend/.env.production
 ```
 
 1. Import repo at [vercel.com](https://vercel.com)
@@ -213,11 +231,12 @@ This project is designed to be forked and self-hosted. Contributions that improv
 
 **Good areas to contribute:**
 - US market support (Interactive Brokers / Alpaca integration instead of Zerodha)
+- Groww integration (no public API exists yet — any workaround welcome)
 - Better LLM prompts for more accurate analysis
 - Additional data sources (earnings calendars, insider trading, options flow)
 - Push notifications (FCM / APNs / Web Push — stub is in `shared/notifications/`)
 - Multi-currency portfolio support
-- Tests
+- Tests (none exist yet — any coverage is welcome)
 
 **How to contribute:**
 1. Fork the repo
@@ -247,11 +266,12 @@ portfolio-ai/
 ├── frontend/          # React + TypeScript + Vite
 ├── scripts/
 │   ├── schema.sql     # Full database schema
-│   ├── deploy_agents.sh
-│   └── setup_gcp.sh
+│   ├── deploy_agents.sh  # Builds + deploys all agents to Cloud Run
+│   └── setup_gcp.sh      # Creates GCP project, secrets, artifact registry
 └── infra/
     ├── docker/        # Local dev docker-compose
-    └── cloud-run/     # GCP Cloud Run YAML configs
+    ├── cloud-run/     # GCP Cloud Run YAML configs
+    └── scheduler/     # GCP Cloud Scheduler job definitions (create_jobs.sh)
 ```
 
 ---
@@ -263,7 +283,7 @@ portfolio-ai/
 - [ ] US market support (Interactive Brokers / Alpaca)
 - [ ] Multi-user instances with invite system
 - [ ] Mobile app (React Native, reusing the same API)
-- [ ] GPT-4o consensus scoring (Phase 2 — stubbed in `shared/llm/client.py`)
+- [ ] Multi-LLM consensus scoring (Phase 2 — stubbed in `shared/llm/client.py`)
 - [ ] Backtesting alerts against historical price data
 
 ---
