@@ -41,7 +41,7 @@ export function PortfolioScreen({ onConnectKite }: { onConnectKite?: () => void 
 
   useEffect(() => {
     portfolio.getHoldings()
-      .then(data => { setHoldings(data); setLoading(false); })
+      .then(data => { setHoldings(data ?? []); setLoading(false); })
       .catch(e  => { setError(e.message); setLoading(false); });
   }, []);
 

@@ -49,7 +49,7 @@ export function AlertsScreen() {
 
   useEffect(() => {
     alerts.getAll(100)
-      .then(d  => { setData(d); setLoading(false); })
+      .then(d  => { setData(d ?? []); setLoading(false); })
       .catch(e => { setError(e.message); setLoading(false); });
   }, []);
 
