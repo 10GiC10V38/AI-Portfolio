@@ -36,40 +36,38 @@ INDIA_RSS_FEEDS = [
 SYSTEM_PROMPT = """You are a financial news analyst.
 Analyze news headlines and their sentiment impact on specific stocks in a portfolio.
 Be precise — only flag genuinely significant news, not routine updates.
-Respond in valid JSON only."""
+Follow the output format exactly as instructed."""
 
 
 def _sanitize(text: str) -> str:
     """Remove characters that can break JSON strings in LLM output."""
-    return text.replace('"', "'").replace("\\", "").replace("\n", " ").replace("\r", "").strip()
+    return (text.replace('"', "'").replace("\\", "")
+            .replace("\n", " ").replace("\r", "")
+            .replace("{", "").replace("}", "").replace("[", "").replace("]", "")
+            .strip())
 
 def build_news_prompt(tickers: list[str], headlines: list[str]) -> str:
-    clean_headlines = [_sanitize(h) for h in headlines[:30] if h.strip()]
-    return f"""Analyze these news headlines for sentiment impact on portfolio stocks.
+    clean_headlines = [_sanitize(h) for h in headlines[:25] if h.strip()]
+    ticker_list = ", ".join(tickers[:10])
+    headlines_text = "\n".join(f"{i+1}. {h}" for i, h in enumerate(clean_headlines))
+    return f"""You are a financial news analyst. Analyze these headlines for stocks in this portfolio: {ticker_list}
 
-Portfolio tickers: {', '.join(tickers)}
+Headlines:
+{headlines_text}
 
-Recent headlines:
-{chr(10).join(f'- {h}' for h in clean_headlines)}
+For EACH ticker that has significant, actionable news (not routine updates), output one line:
+TICKER|severity|title|body
 
-For each ticker that has significant news, respond with valid JSON only:
-{{
-  "analyses": [
-    {{
-      "ticker": "<TICKER>",
-      "sentiment": "bullish or bearish or neutral",
-      "confidence": "high or medium or low",
-      "should_alert": true,
-      "alert_severity": "critical or warning or info or opportunity",
-      "alert_title": "<concise title under 100 chars>",
-      "alert_body": "<2-3 sentence summary>",
-      "relevant_headlines": ["<headline>"]
-    }}
-  ]
-}}
+Where severity is one of: critical, warning, info, opportunity
+Title: under 80 characters
+Body: 1-2 sentences
 
-Only include tickers with high-confidence, actionable signals. Skip neutral/routine news.
-IMPORTANT: Return only valid JSON. Do not include any text before or after the JSON."""
+Example:
+RELIANCE|warning|Reliance faces margin pressure from rising crude|Crude oil prices surged 5% this week, which may compress Reliance's refining margins in Q4.
+
+If no ticker has significant news, output: NONE
+
+Output ONLY the lines above, nothing else."""
 
 
 def fetch_newsapi_headlines(tickers: list[str], api_key: str) -> list[str]:
@@ -140,62 +138,41 @@ def run_news_agent(user_id: str) -> dict:
         response = provider.complete(
             system_prompt=SYSTEM_PROMPT,
             user_prompt=build_news_prompt(tickers, all_headlines),
-            max_tokens=2048,
+            max_tokens=1024,
             temperature=0.1,
         )
-        # Strip markdown code fences Gemini sometimes wraps JSON in
         raw = response.content.strip()
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1]
-            raw = raw.rsplit("```", 1)[0].strip()
-        logger.debug(f"LLM raw response: {raw[:300]}")
-        # Try to extract a valid JSON object even if the output is partially truncated
-        try:
-            result = json.loads(raw)
-        except json.JSONDecodeError:
-            # Fall back: extract just the analyses array if the outer object is broken
-            import re as _re
-            m = _re.search(r'"analyses"\s*:\s*(\[.*?\])', raw, _re.DOTALL)
-            if m:
-                try:
-                    analyses = json.loads(m.group(1))
-                    result = {"analyses": analyses}
-                except json.JSONDecodeError:
-                    raise
-            else:
-                raise
-        for analysis in result.get("analyses", []):
-            if not analysis.get("should_alert"):
-                continue
-            severity = analysis.get("alert_severity")
-            title    = analysis.get("alert_title")
-            body     = analysis.get("alert_body")
-            ticker   = analysis.get("ticker")
-            if not severity or severity not in VALID_SEVERITIES:
-                logger.warning(f"News agent skipping alert — invalid severity: {severity!r}")
-                continue
-            if not title or not body or not ticker:
-                logger.warning("News agent skipping alert — missing required fields")
-                continue
-            write_alert(
-                user_id=user_id,
-                agent_type="news",
-                severity=severity,
-                title=title,
-                body=body,
-                ticker=ticker,
-                llm_provider=response.provider,
-                raw_llm_output=result,
-                data_sources={
-                    "headlines_count": len(all_headlines),
-                    "relevant_headlines": analysis.get("relevant_headlines", []),
-                },
-            )
-            alerts_fired += 1
-    except json.JSONDecodeError as e:
-        logger.error(f"News agent JSON parse failed: {e}")
-        finish_agent_run(run_id, "failed", error_message=str(e))
-        return {"status": "failed", "error": str(e)}
+        logger.debug(f"LLM raw response: {raw[:400]}")
+
+        if raw.upper() == "NONE" or not raw:
+            logger.info("News agent: no significant alerts this run")
+        else:
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.upper() == "NONE":
+                    continue
+                parts = line.split("|", 3)
+                if len(parts) < 4:
+                    logger.debug(f"Skipping malformed line: {line[:80]}")
+                    continue
+                ticker, severity, title, body = (p.strip() for p in parts)
+                if severity not in VALID_SEVERITIES:
+                    logger.warning(f"News agent skipping — invalid severity: {severity!r}")
+                    continue
+                if not ticker or not title or not body:
+                    continue
+                write_alert(
+                    user_id=user_id,
+                    agent_type="news",
+                    severity=severity,
+                    title=title[:500],
+                    body=body[:5000],
+                    ticker=ticker,
+                    llm_provider=response.provider,
+                    raw_llm_output={"raw": raw},
+                    data_sources={"headlines_count": len(all_headlines)},
+                )
+                alerts_fired += 1
     except Exception as e:
         logger.error(f"News agent run failed: {e}")
         finish_agent_run(run_id, "failed", error_message=str(e))
