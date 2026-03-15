@@ -220,6 +220,9 @@ def run_youtube_agent(user_id: str) -> dict:
                 rel_raw = rel_response.content.strip()
                 if rel_raw.startswith("```"):
                     rel_raw = rel_raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                last_brace = rel_raw.rfind("}")
+                if last_brace != -1:
+                    rel_raw = rel_raw[:last_brace + 1]
                 relevance = json.loads(rel_raw)
             except json.JSONDecodeError:
                 continue
@@ -247,6 +250,9 @@ def run_youtube_agent(user_id: str) -> dict:
                 ins_raw = ins_response.content.strip()
                 if ins_raw.startswith("```"):
                     ins_raw = ins_raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                last_brace = ins_raw.rfind("}")
+                if last_brace != -1:
+                    ins_raw = ins_raw[:last_brace + 1]
                 insights = json.loads(ins_raw)
             except json.JSONDecodeError:
                 continue

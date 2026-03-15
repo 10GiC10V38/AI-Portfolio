@@ -143,6 +143,10 @@ def run_news_agent(user_id: str) -> dict:
             raw = raw.split("\n", 1)[-1]
             raw = raw.rsplit("```", 1)[0].strip()
         logger.debug(f"LLM raw response: {raw[:200]}")
+        # Truncate to last complete JSON object in case output was cut off
+        last_brace = raw.rfind("}")
+        if last_brace != -1:
+            raw = raw[:last_brace + 1]
         result = json.loads(raw)
         for analysis in result.get("analyses", []):
             if not analysis.get("should_alert"):
