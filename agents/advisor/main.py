@@ -179,7 +179,7 @@ def run_chat(user_id: str, session_id: str, user_message: str) -> dict:
     response = provider.complete_chat(
         system_prompt=SYSTEM_PROMPT,
         messages=messages,
-        max_tokens=1024,
+        max_tokens=4096,
     )
 
     assistant_reply = response.content
