@@ -46,6 +46,7 @@ body {
 .app-layout {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   height: 100dvh;
   overflow: hidden;
 }
@@ -137,6 +138,7 @@ body {
 .sync-banner {
   background: var(--accent); color: #fff; text-align: center;
   padding: 8px 16px; font-size: 0.85rem; font-weight: 500;
+  flex-shrink: 0;
 }
 
 /* ── Cards ──────────────────────────────────────────────────────────────────── */
